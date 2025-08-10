@@ -1,9 +1,7 @@
 # streamlit_app.py
-# とどランのランキング記事URLを2つ貼り付けて、
-# 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
-# 相関係数・決定係数、散布図（外れ値あり／外れ値除外を横並び・回帰直線つき）、
-# 箱ひげ図（左右横並び）を表示。
-# Matplotlibは japanize-matplotlib で日本語化（無い環境はフォールバック）。
+# とどランURL×2 → 都道府県の総数データを抽出し、
+# 相関係数・決定係数、散布図（外れ値あり／外れ値除外：横並び・回帰直線つき・nを下に表示）、
+# 箱ひげ図（左右横並び）を表示。日本語は japanize-matplotlib で対応。
 
 import io
 import re
@@ -21,6 +19,7 @@ try:
     import japanize_matplotlib  # noqa: F401
     plt.rcParams["axes.unicode_minus"] = False
 except Exception:
+    # フォールバック：日本語フォント自動検出
     def _set_jp_font_fallback():
         candidates = [
             "Yu Gothic", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP",
@@ -39,20 +38,17 @@ except Exception:
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
-
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
     "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
-    "ページ内の **表タイトル** をグラフのラベルに反映します。"
+    "ページ内の **表タイトル** をグラフのラベルに反映します（日本語対応）。"
 )
 
 # -------------------- 表示サイズ --------------------
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
 EXPORT_DPI = 200
-# 散布図は横並び用に幅480pxずつ（2枚で約960px）
-SCATTER_WIDTH_PX = 480
-# 箱ひげ図は左右横並びで各320px
-BOX_WIDTH_PX = 320
+SCATTER_WIDTH_PX = 480   # 散布図：横並び2枚でも見やすい幅
+BOX_WIDTH_PX = 320       # 箱ひげ図：左右並び
 
 def show_fig(fig, width_px: int):
     buf = io.BytesIO()
@@ -109,7 +105,8 @@ def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
     hi = q3 + k * iqr
     return (arr >= lo) & (arr <= hi)
 
-def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int):
+def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int, show_n: bool = True):
+    """散布図＋回帰直線。日本語ラベル。下に n= を表示"""
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y)
     if len(x) >= 2:
@@ -118,10 +115,12 @@ def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str,
         ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
         r = np.corrcoef(x, y)[0, 1]
         ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
-    ax.set_xlabel(la)
-    ax.set_ylabel(lb)
+    ax.set_xlabel(la)  # 日本語（ページの表タイトルから取得）
+    ax.set_ylabel(lb)  # 日本語
     ax.set_title(title)
     show_fig(fig, width_px)
+    if show_n:
+        st.caption(f"n = {len(x)}")  # ← 散布図の直下に母数
 
 def flatten_columns(cols) -> list:
     if isinstance(cols, pd.MultiIndex):
@@ -164,7 +163,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 18):
+def load_todoran_table(url: str, version: int = 19):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -265,6 +264,7 @@ def load_todoran_table(url: str, version: int = 18):
 
         return None, None
 
+    # read_html の各表を試し、caption をラベル候補に使う
     for idx, raw in enumerate(tables):
         got, val_col = pick_value_dataframe(raw)
         if got is not None:
@@ -366,13 +366,13 @@ if st.button("相関を計算・表示する", type="primary"):
     st.markdown(f"**（外れ値除外）相関係数 r = {r_in:.4f}**")
     st.markdown(f"**（外れ値除外）決定係数 r2 = {r2_in:.4f}**")
 
-    # 散布図：外れ値あり／除外 を横並び表示（どちらも回帰直線つき）
+    # 散布図：外れ値あり／除外（横並び）＋ 各図の下に n=
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
     c_left, c_right = st.columns(2)
     with c_left:
-        draw_scatter_reg_from_arrays(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
+        draw_scatter_reg_from_arrays(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX, show_n=True)
     with c_right:
-        draw_scatter_reg_from_arrays(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
+        draw_scatter_reg_from_arrays(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX, show_n=True)
 
     # 箱ひげ図（左右に横並び）
     st.subheader("箱ひげ図")
@@ -392,7 +392,7 @@ if st.button("相関を計算・表示する", type="primary"):
         ax2.set_xticks([1]); ax2.set_xticklabels([label_b])
         show_fig(fig2, BOX_WIDTH_PX)
 
-    # CSVダウンロード（内部名のまま保存：分析向け）
+    # CSVダウンロード
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "結合データをCSVで保存（内部列名：value_a/value_b）",
