@@ -33,11 +33,9 @@ else:
 plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の豆腐回避
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
-st.title("都道府県データ 相関ツール（URL版）")
+st.title("CorrGraph")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
-    "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
-    "ページ内の **表タイトル** をグラフのラベルに反映します。"
 )
 
 # -------------------- 表示サイズ --------------------
