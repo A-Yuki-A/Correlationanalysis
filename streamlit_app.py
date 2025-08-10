@@ -1,20 +1,24 @@
 # streamlit_app.py
-# 2つの とどラン URL から「都道府県 × 実数値（偏差値は除外）」を自動抽出して
-# 相関係数・決定係数・散布図・箱ひげ図・四分位数を表示するアプリ
+# とどランのランキング記事URLを2つ貼り付けて、
+# 「都道府県 × 実数値（偏差値は除外）」を自動抽出し、
+# 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示するアプリ
 
 import re
-import requests
-import pandas as pd
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
+import requests
 from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
-st.write("とどランの **各ランキングページのURL** を2つ貼り付けてください。表の「偏差値」列は使わず、**実数の値**を自動抽出します。")
+st.write(
+    "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
+    "表の「偏差値」列は使わず、**実数の値**（人数・金額・割合など）を自動抽出します。"
+)
 
-# ---- 共通ユーティリティ ----
+# ---- 47都道府県リスト ---------------------------------------------------------
 PREFS = [
     "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県",
     "埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県",
@@ -24,6 +28,7 @@ PREFS = [
 ]
 PREF_SET = set(PREFS)
 
+# ---- 共通ユーティリティ -------------------------------------------------------
 def to_number(s: str) -> float:
     """文字列から数値（小数含む）を抜き出して float 化。単位や%は無視。失敗時はNaN。"""
     if pd.isna(s):
@@ -35,10 +40,11 @@ def to_number(s: str) -> float:
         return np.nan
     try:
         return float(m.group(0))
-    except:
+    except Exception:
         return np.nan
 
 def five_number_summary(series: pd.Series):
+    """最小値, 第1四分位(Q1), 中央値(Q2), 第3四分位(Q3), 最大値 を辞書で返す"""
     s = pd.to_numeric(series, errors="coerce").dropna()
     if s.empty:
         return dict(最小値=np.nan, 第1四分位=np.nan, 中央値=np.nan, 第3四分位=np.nan, 最大値=np.nan)
@@ -64,103 +70,121 @@ def draw_boxplot(series: pd.Series, label: str):
     ax.set_title(f"箱ひげ図：{label}")
     st.pyplot(fig)
 
-# ---- とどランURL → (pref, value) DataFrame ----
+def flatten_columns(cols) -> list:
+    """pandasのMultiIndex列や 'Unnamed' を含む列名を1段の文字列リストにフラット化"""
+    if isinstance(cols, pd.MultiIndex):
+        flat = []
+        for tup in cols:
+            parts = [str(x) for x in tup if pd.notna(x)]
+            parts = [p for p in parts if not p.startswith("Unnamed")]
+            name = " ".join(parts).strip()
+            flat.append(name if name else "col")
+        return flat
+    return [str(c).strip() for c in cols]
+
+# ---- とどランURL → (pref, value) DataFrame ------------------------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str) -> pd.DataFrame:
-    """とどラン記事URLから、「都道府県」と「実数値（偏差値除外）」を抽出。"""
-    # 1) 取得
+def load_todoran_table(url: str, version: int = 3) -> pd.DataFrame:
+    """とどラン記事URLから、『都道府県』と『偏差値でない実数値の列』を自動抽出して返す。"""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
 
-    # 2) まずは pandas.read_html で表を抽出（lxml/bs4ベース）
-    #    一部記事で複数表があるため、候補を走査して最適なものを選ぶ。
+    # 候補テーブルから「都道府県」列＋「偏差値でない数値列」を選ぶ
+    def pick_value_column(df: pd.DataFrame):
+        # 列名をフラット化＆重複除去
+        df = df.copy()
+        df.columns = flatten_columns(df.columns)
+        df = df.loc[:, ~df.columns.duplicated()]
+
+        cols = list(df.columns)
+        # 都道府県っぽい列名
+        pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名", "道府県", "府県"))]
+        if not pref_cols:
+            return None  # このDFは不採用
+
+        # 「偏差値」を含まない & 県名・順位でない列
+        value_candidates = [c for c in cols if ("偏差値" not in c) and (c not in ("順位", "都道府県", "道府県", "県名", "府県"))]
+        if not value_candidates:
+            return None
+
+        # スコアリング：数値化できる件数が多い列を優先
+        best_score = -1
+        best_df = None
+
+        for pref_col in pref_cols:
+            work = df[[pref_col] + value_candidates].copy()
+            work[pref_col] = work[pref_col].astype(str).str.strip()
+            work = work[work[pref_col].isin(PREF_SET)]  # 47都道府県のみ
+            if work.empty:
+                continue
+
+            for vc in value_candidates:
+                nums = pd.to_numeric(work[vc].apply(to_number), errors="coerce")
+                score = nums.notna().sum()
+                if score > best_score:
+                    w2 = pd.DataFrame({"pref": work[pref_col], "value": nums})
+                    w2 = w2.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
+                    best_score = score
+                    best_df = w2
+
+        # 「十分に数値が取れている」ものだけ採用（47都道府県のうち30以上など）
+        if best_df is not None and best_score >= 30 and not best_df.empty:
+            best_df["pref"] = pd.Categorical(best_df["pref"], categories=PREFS, ordered=True)
+            best_df = best_df.sort_values("pref").reset_index(drop=True)
+            return best_df
+        return None
+
+    # 1) pandas.read_html で表を抽出（複数ありうる）
     tables = []
     try:
-        tables = pd.read_html(html, flavor="lxml")  # lxml優先
+        tables = pd.read_html(html, flavor="lxml")
     except Exception:
         try:
             tables = pd.read_html(html, flavor="bs4")
         except Exception:
             tables = []
 
-    # 3) ヘッダ判定関数
-    def pick_value_column(df: pd.DataFrame):
-        """dfの中から『都道府県』列と、『偏差値でない数値列』を推定して返す (value_col名 or None)。"""
-        cols = [str(c) for c in df.columns]
-        # 都道府県っぽい列名
-        pref_col_candidates = [c for c in cols if "都道府県" in c or c in ("県名","道府県","府県")]
-        if not pref_col_candidates:
-            return None, None
-        # 「偏差値」を含まない列名のうち、数値らしい列を優先
-        value_candidates = [c for c in cols if ("偏差値" not in c) and (c not in ("順位","都道府県","道府県","県名","府県"))]
-        # 列名が決めにくい場合、都道府県列の右隣を優先
-        for pref_col in pref_col_candidates:
-            # 候補列をスコアリング：数値化できるセルが多いほど高評価
-            best_col, best_score = None, -1
-            for vc in value_candidates:
-                nums = pd.to_numeric(df[vc].apply(to_number), errors="coerce")
-                score = nums.notna().sum()
-                if score > best_score:
-                    best_col, best_score = vc, score
-            if best_col and best_score >= 30:  # 47都道府県のうち一定数が数値化できる
-                return pref_col, best_col
-        return None, None
+    for raw in tables:
+        got = pick_value_column(raw)
+        if got is not None:
+            return got
 
-    # 4) 表ごとに試す
-    for df in tables:
-        # 列名の重複・Unnamed対策
-        df = df.loc[:, ~df.columns.duplicated()].copy()
-        pref_col, val_col = pick_value_column(df)
-        if pref_col and val_col:
-            # 前処理：全国行などを除外
-            work = df[[pref_col, val_col]].rename(columns={pref_col:"pref", val_col:"value"})
-            # 前後の空白や注釈除去
-            work["pref"] = work["pref"].astype(str).str.strip()
-            work = work[work["pref"].isin(PREF_SET)]  # 47都道府県のみ
-            work["value"] = work["value"].apply(to_number)
-            work = work.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
-            if len(work) >= 30:
-                # 都道府県順に並べ替え
-                work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
-                work = work.sort_values("pref").reset_index(drop=True)
-                return work
-
-    # 5) もし read_html で拾えない場合、簡易パーサ（aタグ＋テキスト行）で拾う最後の手段
+    # 2) フォールバック：ページテキストからの簡易抽出
     soup = BeautifulSoup(html, "lxml")
-    # テーブルのテキストを走査
     lines = []
     for tag in soup.find_all(text=True):
         t = str(tag).strip()
         if t:
             lines.append(t)
-    # 連結して行に分割
     text = "\n".join(lines)
+
     rows = []
     for line in text.splitlines():
-        # パターン例: "1 滋賀県 81.78歳 69.77"
+        # 例: "1 滋賀県 81.78歳 69.77" から「滋賀県 81.78」を拾う
         m = re.search(r"(北海道|..県|..府|東京都)\s+(-?\d+(?:\.\d+)?)", line)
         if m:
             pref = m.group(1)
             val = float(m.group(2))
             if pref in PREF_SET:
                 rows.append((pref, val))
+
     if rows:
-        work = pd.DataFrame(rows, columns=["pref","value"]).drop_duplicates("pref")
+        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
         work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
         return work
 
-    # 6) それでも無理なら空
-    return pd.DataFrame(columns=["pref","value"])
+    # 3) それでも無理なら空
+    return pd.DataFrame(columns=["pref", "value"])
 
-# ---- UI ----
+# ---- UI -----------------------------------------------------------------------
 c1, c2 = st.columns(2)
 with c1:
-    url_a = st.text_input("データAのURL（とどラン記事URL）", placeholder="https://todo-ran.com/t/kiji/XXXXX")
+    url_a = st.text_input("データAのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/XXXXX")
 with c2:
-    url_b = st.text_input("データBのURL（とどラン記事URL）", placeholder="https://todo-ran.com/t/kiji/YYYYY")
+    url_b = st.text_input("データBのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/YYYYY")
 
 if st.button("相関を計算・表示する", type="primary"):
     if not url_a or not url_b:
@@ -174,13 +198,16 @@ if st.button("相関を計算・表示する", type="primary"):
         st.stop()
 
     if df_a.empty or df_b.empty:
-        st.error("表の抽出に失敗しました。URLがランキング記事であること、ページの表に『都道府県』列があることを確認してください。")
+        st.error("表の抽出に失敗しました。URLがランキング記事であること、表に『都道府県』列があることを確認してください。")
         st.stop()
 
-    # 結合（共通都道府県のみ）
-    df = pd.merge(df_a.rename(columns={"value":"value_a"}),
-                  df_b.rename(columns={"value":"value_b"}),
-                  on="pref", how="inner")
+    # 共通都道府県で結合
+    df = pd.merge(
+        df_a.rename(columns={"value": "value_a"}),
+        df_b.rename(columns={"value": "value_b"}),
+        on="pref",
+        how="inner",
+    )
 
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -192,29 +219,39 @@ if st.button("相関を計算・表示する", type="primary"):
     # 相関
     r = float(pd.Series(df["value_a"]).corr(pd.Series(df["value_b"])))
     r2 = r ** 2
-    c3, c4 = st.columns(2)
-    with c3:
+
+    st.subheader("相関の結果")
+    m1, m2 = st.columns(2)
+    with m1:
         st.metric("相関係数 r（ピアソン）", f"{r:.4f}")
-    with c4:
+    with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
+    # 散布図
     st.subheader("散布図")
     draw_scatter(df, "データA", "データB")
 
+    # 箱ひげ図と5数要約
     st.subheader("箱ひげ図 と 四分位数（A と B）")
-    c5, c6 = st.columns(2)
-    with c5:
+    b1, b2 = st.columns(2)
+    with b1:
         draw_boxplot(df["value_a"], "データA")
         a_summary = five_number_summary(df["value_a"])
         st.markdown("**データAの5数要約**")
         st.table(pd.DataFrame(a_summary, index=["値"]))
-    with c6:
+    with b2:
         draw_boxplot(df["value_b"], "データB")
         b_summary = five_number_summary(df["value_b"])
         st.markdown("**データBの5数要約**")
         st.table(pd.DataFrame(b_summary, index=["値"]))
 
+    # CSVダウンロード
     csv = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("結合データをCSVで保存", data=csv, file_name="todoran_merged.csv", mime="text/csv")
+    st.download_button(
+        "結合データをCSVで保存",
+        data=csv,
+        file_name="todoran_merged.csv",
+        mime="text/csv",
+    )
 else:
     st.info("上の2つの入力欄に とどラン記事のURL を貼ってから「相関を計算・表示する」を押してください。")
