@@ -1,9 +1,9 @@
 # streamlit_app.py
-# とどランURL×2 → 都道府県の総数データを抽出し、
-# 外れ値あり／外れ値除外の散布図を横並びで表示。
-# 各散布図の「直下」にその図の n, 相関係数 r, 決定係数 r2 を表示。
-# ページ末尾に外れ値の定義（IQR法）を記載。
-# Matplotlibは日本語フォントを優先（同梱フォント or japanize）。
+# とどランURL×2 → 都道府県の「総数」データを抽出し、
+# 外れ値あり／外れ値除外の散布図（横並び・回帰直線つき）を表示。
+# 各散布図の直下に n・相関係数r・決定係数r2 を表示。
+# 入力UIは X=説明変数 / Y=目的変数 を意識させる文言を追加。
+# 最下部に外れ値の定義（IQR法）を記載。
 
 import io
 import re
@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
 
-
+# ===【ここから：ご指定のフォント設定ブロック（importsの直後に追加）】===
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -38,37 +38,7 @@ else:
             pass
 
 plt.rcParams["axes.unicode_minus"] = False  # マイナス記号が□になるのを防ぐ
-
-# --- 日本語フォント（同梱フォント→システム→japanize の優先で） ---
-def ensure_jp_font():
-    embed = [
-        ("Source Han Code JP", "fonts/SourceHanCodeJP-Regular.otf"),
-        ("Noto Sans JP", "fonts/NotoSansJP-Regular.ttf"),
-        ("IPAexGothic", "fonts/ipaexg.ttf"),
-    ]
-    for family, p in embed:
-        if Path(p).exists():
-            fm.fontManager.addfont(p)
-            plt.rcParams["font.family"] = family
-            plt.rcParams["axes.unicode_minus"] = False
-            return
-    # system fallback
-    for family in ["Yu Gothic","Hiragino Sans","Meiryo","Noto Sans JP","IPAexGothic","IPAGothic"]:
-        try:
-            fm.findfont(fm.FontProperties(family=family), fallback_to_default=False)
-            plt.rcParams["font.family"] = family
-            plt.rcParams["axes.unicode_minus"] = False
-            return
-        except Exception:
-            pass
-    # japanize fallback
-    try:
-        import japanize_matplotlib  # noqa: F401
-    except Exception:
-        pass
-    plt.rcParams["axes.unicode_minus"] = False
-
-ensure_jp_font()
+# ===【ここまで】===
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
@@ -146,17 +116,14 @@ def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str
     varx = float(np.nanstd(x)) if len(x) else 0.0
     vary = float(np.nanstd(y)) if len(y) else 0.0
     if len(x) >= 2:
-        # 回帰直線（xの分散が0でないときのみ）
         if varx > 0:
             slope, intercept = np.polyfit(x, y, 1)
             xs = np.linspace(x.min(), x.max(), 200)
             ax.plot(xs, slope * xs + intercept, label="回帰直線")
-        # 相関（両方の分散が0でないときのみ）
         if varx > 0 and vary > 0:
             r = float(np.corrcoef(x, y)[0, 1])
             r2 = r**2
 
-    # 凡例（rがあればタイトルに表示）
     if r is not None and np.isfinite(r):
         ax.legend(loc="best", frameon=False, title=f"相関係数 r = {r:.3f}／決定係数 r2 = {r2:.3f}")
     else:
@@ -167,7 +134,6 @@ def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str
     ax.set_title(title if str(title).strip() else "散布図")
 
     show_fig(fig, width_px)
-    # ← 各図の直下にその図の n, r, r2 を表示
     st.caption(f"n = {len(x)}")
     st.caption(f"相関係数 r = {fmt(r)}")
     st.caption(f"決定係数 r2 = {fmt(r2)}")
@@ -212,7 +178,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 23):
+def load_todoran_table(url: str, version: int = 24):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -236,6 +202,7 @@ def load_todoran_table(url: str, version: int = 23):
         df = df.copy()
         df.columns = make_unique(flatten_columns(df.columns))
         df = df.loc[:, ~df.columns.duplicated()]
+
         cols = list(df.columns)
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名","道府県","府県"))]
         if not pref_cols:
@@ -299,7 +266,7 @@ def load_todoran_table(url: str, version: int = 23):
             label = compose_label(caption_text, val_col, page_h1 or page_title)
             return got, label
 
-    # フォールバック（テキスト走査）
+    # フォールバック（ページ全文から簡易抽出）
     lines = []
     for tag in soup.find_all(text=True):
         t = str(tag).strip()
@@ -322,13 +289,37 @@ def load_todoran_table(url: str, version: int = 23):
 
     return pd.DataFrame(columns=["pref","value"]), "データ"
 
-# -------------------- UI --------------------
+# -------------------- UI（X=説明変数 / Y=目的変数 を意識させる） --------------------
+st.markdown("### 入力の考え方（重要）")
+st.info(
+    "**横軸（X軸）＝説明する側（原因・条件）**\n"
+    "→ これが変わったら、どうなるのか を説明するための変数。\n"
+    "例：勉強時間、年齢、距離、気温、広告費、人口 など\n\n"
+    "**縦軸（Y軸）＝説明される側（結果・反応）**\n"
+    "→ X軸の条件によって値が変化すると考えられる変数。\n"
+    "例：テストの点数、売上、家賃、電力消費量、来場者数 など\n\n"
+    "※統計学では X を **説明変数**、Y を **目的変数** と呼びます。\n"
+    "※『順位』『偏差値』のページは使いません。**総数**（件数・人数・金額…）の指標を選んでください。"
+)
+
 c1, c2 = st.columns(2)
 with c1:
-    url_a = st.text_input("データAのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/XXXXX")
-with c2:
-    url_b = st.text_input("データBのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/YYYYY")
+    url_a = st.text_input(
+        "X軸（説明変数）URL ＝ 原因・条件の指標",
+        placeholder="https://todo-ran.com/t/kiji/XXXXX",
+        help="例：勉強時間、気温、広告費、人口、世帯数、施設数、販売額 など（総数の指標）"
+    )
+    st.caption("例：勉強時間／気温／広告費／人口 など（Xを変えたらYがどう変わるかを見る）")
 
+with c2:
+    url_b = st.text_input(
+        "Y軸（目的変数）URL ＝ 結果・反応の指標",
+        placeholder="https://todo-ran.com/t/kiji/YYYYY",
+        help="例：テストの点数、売上、家賃、電力消費量、事故件数、来場者数 など（総数の指標）"
+    )
+    st.caption("例：テストの点数／売上／家賃／電力消費量／来場者数 など（YはXに応じて変わると考える）")
+
+# -------------------- メイン処理 --------------------
 if st.button("相関を計算・表示する", type="primary"):
     if not url_a or not url_b:
         st.error("2つのURLを入力してください。"); st.stop()
@@ -355,7 +346,7 @@ if st.button("相関を計算・表示する", type="primary"):
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。"); st.stop()
 
-    # 数値列
+    # 数値配列
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
@@ -381,9 +372,5 @@ if st.button("相関を計算・表示する", type="primary"):
         "**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。\n"
         "散布図では、**x または y のどちらかが外れ値**に該当する都道府県を除外して「外れ値除外」図を作成しています。"
     )
-
-    # CSV
-    csv = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("結合データをCSVで保存（内部列名：value_a/value_b）", data=csv, file_name="todoran_merged.csv", mime="text/csv")
 else:
     st.info("上の2つの入力欄に とどラン記事のURL を貼ってから「相関を計算・表示する」を押してください。")
