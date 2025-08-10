@@ -3,7 +3,7 @@
 # 外れ値あり／外れ値除外の散布図（横並び・回帰直線つき）を表示。
 # 各散布図の直下に n・相関係数r・決定係数r2 を表示。
 # 外れ値（都道府県名）は散布図の下に表示。CSV保存も可。
-# ダーク系テーマ（背景/サイドバー/ボタン/図の背景）を適用。
+# 最下部に外れ値の定義（IQR法）を記載。
 
 import io
 import re
@@ -16,18 +16,6 @@ import requests
 from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
-
-# ===================== テーマ設定（ここを書き換えれば配色一括変更） =====================
-THEME = {
-    "primary": "#00C2FF",          # 強調色（ボタンなど）
-    "bg": "#0E1117",               # ページ背景
-    "bg_secondary": "#1B2330",     # サイドバー/カード系
-    "text": "#FAFAFA",             # 文字色
-    "muted": "#B8C2CC",            # 補助テキスト
-    "grid": "#3A3F44",             # グリッド
-    "axes": "#E6E6E6",             # 枠線・軸ラベル
-}
-# ===============================================================================
 
 # === フォント設定：同梱フォント最優先（なければシステム） ===
 fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # 置いたフォント（同梱推奨）
@@ -44,76 +32,7 @@ else:
             pass
 plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の豆腐回避
 
-# === Matplotlib をテーマ色に合わせる ===
-plt.rcParams.update({
-    "figure.facecolor": THEME["bg"],
-    "axes.facecolor": THEME["bg_secondary"],
-    "savefig.facecolor": THEME["bg"],
-    "axes.edgecolor": THEME["axes"],
-    "axes.labelcolor": THEME["text"],
-    "xtick.color": THEME["text"],
-    "ytick.color": THEME["text"],
-    "text.color": THEME["text"],
-    "grid.color": THEME["grid"],
-    "axes.grid": True,
-    "grid.linestyle": "--",
-    "grid.alpha": 0.25,
-})
-
-# === Streamlit 側の配色をCSSで反映（背景/サイドバー/ボタン/見出しなど） ===
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
-st.markdown(f"""
-<style>
-:root {{
-  --primary: {THEME["primary"]};
-  --bg: {THEME["bg"]};
-  --bg2: {THEME["bg_secondary"]};
-  --text: {THEME["text"]};
-  --muted: {THEME["muted"]};
-}}
-/* 全体背景と文字色 */
-.stApp {{
-  background: var(--bg);
-  color: var(--text);
-}}
-/* サイドバー */
-[data-testid="stSidebar"] > div:first-child {{
-  background: var(--bg2);
-  color: var(--text);
-}}
-/* コンテナの余白少し詰める */
-.block-container {{
-  padding-top: 1rem;
-  padding-bottom: 2rem;
-}}
-/* 小見出しなどを明瞭に */
-h1, h2, h3, h4, h5, h6 {{
-  color: var(--text);
-}}
-/* データフレームのスクロール背景 */
-[data-testid="stDataFrame"] div{{ color: var(--text); }}
-/* プライマリボタン/ダウンロードボタン */
-.stButton>button, .stDownloadButton>button {{
-  background: var(--primary);
-  color: #0E1117;
-  border: none;
-  border-radius: 8px;
-  font-weight: 700;
-}}
-.stButton>button:hover, .stDownloadButton>button:hover {{
-  filter: brightness(1.05);
-}}
-/* info/warning などのテキスト色 */
-.stAlert p {{
-  color: var(--text);
-}}
-/* キャプションを少し弱めの色で */
-.small-font, .caption, .stCaption, footer p {{
-  color: var(--muted);
-}}
-</style>
-""", unsafe_allow_html=True)
-
 st.title("都道府県データ 相関ツール（URL版）")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
@@ -194,8 +113,7 @@ def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str
             xs = np.linspace(x.min(), x.max(), 200)
             ax.plot(xs, slope * xs + intercept, label="回帰直線")
         if varx > 0 and vary > 0:
-            r = float(np.corrcoef(x, y)[0, 1])
-            r2 = r**2
+            r = float(np.corrcoef(x, y)[0, 1]); r2 = r**2
 
     if r is not None and np.isfinite(r):
         ax.legend(loc="best", frameon=False, title=f"相関係数 r = {r:.3f}／決定係数 r2 = {r2:.3f}")
@@ -251,7 +169,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 28):
+def load_todoran_table(url: str, version: int = 27):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -324,7 +242,7 @@ def load_todoran_table(url: str, version: int = 28):
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, fallback_candidates)
             if got is not None:
-                got["pref"] = pd.Categorical(got["pref"], categories/PREFS if False else PREFS, ordered=True)
+                got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
                 return got.sort_values("pref").reset_index(drop=True), val_col
         return None, None
 
@@ -425,7 +343,7 @@ if st.button("相関を計算・表示する", type="primary"):
     with col_r:
         draw_scatter_reg_with_metrics(x_in,  y_in,  label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
 
-    # 外れ値（都道府県名）を散布図の「下」に表示
+    # --- ここから外れ値（都道府県名）を散布図の「下」に表示 ---
     st.subheader("外れ値（都道府県名）")
     c1, c2, c3 = st.columns(3)
     outs_x = pref_all[~mask_x_in]
@@ -453,6 +371,7 @@ if st.button("相関を計算・表示する", type="primary"):
         file_name="outliers.csv",
         mime="text/csv"
     )
+    # --- ここまで外れ値表示 ---
 
     # ページ末尾に外れ値の定義
     st.markdown("---")
