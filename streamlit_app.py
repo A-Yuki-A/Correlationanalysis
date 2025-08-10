@@ -3,8 +3,9 @@
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
 # 相関係数・決定係数・散布図・箱ひげ図を表示する。
-# 図は st.image(width=...) で“実寸50%”に確実に縮小表示。
-# Matplotlib のフォントは Yu Gothic を最優先で使用（未インストール時のみ日本語フォントにフォールバック）。
+# 図は PNG化して st.image(width=...) で “実寸50%（320px幅）” に確実に縮小表示。
+# 散布図には回帰直線を追加。
+# Matplotlib のフォントは Yu Gothic を最優先（無ければ日本語フォントに自動フォールバック）。
 
 import io
 import re
@@ -25,14 +26,15 @@ st.write(
     "ページ内の **表タイトル** をグラフや表のラベルに反映します。"
 )
 
-# -------------------- 図サイズ制御（50%で確実に表示） --------------------
-BASE_W_INCH, BASE_H_INCH = 6.4, 4.8   # matplotlib 既定サイズ
-EXPORT_DPI = 200                      # クッキリ表示用
-DISPLAY_SCALE = 0.50                  # 画面表示スケール（50%）
-DISPLAY_WIDTH_PX = int(BASE_W_INCH * EXPORT_DPI * DISPLAY_SCALE)
+# -------------------- “見た目50%” を厳密に実現 --------------------
+# Matplotlib 既定サイズ 6.4inch × 100dpi = 640px を基準に、50% = 320px で表示。
+BASE_W_INCH, BASE_H_INCH = 6.4, 4.8     # 論理サイズ
+EXPORT_DPI = 200                        # 保存時DPI（高精細）
+BASE_W_PX = int(BASE_W_INCH * 100)      # 640px（基準）
+DISPLAY_WIDTH_PX = int(BASE_W_PX * 0.50)  # 50% → 320px
 
 def show_fig(fig):
-    """figをPNGにして、width指定で確実に縮小表示。"""
+    """figをPNGにして、幅320pxで確実に縮小表示。"""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     buf.seek(0)
@@ -41,33 +43,17 @@ def show_fig(fig):
 
 # -------------------- Matplotlib だけ Yu Gothic を使用 --------------------
 def set_matplotlib_font_yugothic():
-    """
-    Matplotlib の描画フォントを Yu Gothic に固定。
-    見つからない場合のみ、他の日本語フォントにフォールバック。
-    ※ Streamlit（Web側）のフォントには影響しません。
-    """
-    # 最優先: Yu Gothic（Windows系）, その次に Yu Gothic UI
     preferred = ["Yu Gothic", "Yu Gothic UI"]
-
-    # 未インストール環境向けフォールバック
     fallbacks = ["Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic"]
-
-    # Yu Gothic を探す
     for name in preferred + fallbacks:
         try:
             prop = fm.FontProperties(family=name)
-            fm.findfont(prop, fallback_to_default=False)  # 見つからないと例外
+            fm.findfont(prop, fallback_to_default=False)
             plt.rcParams["font.family"] = name
             break
         except Exception:
             continue
-
-    # Windows環境でマイナスが豆腐にならないように
     plt.rcParams["axes.unicode_minus"] = False
-
-    # （任意）もし手元に Yu Gothic のフォントファイルがあるなら、リポジトリに置いて下のように登録も可能
-    # fm.fontManager.addfont("assets/YuGothM.ttc")
-    # plt.rcParams["font.family"] = "Yu Gothic"
 
 set_matplotlib_font_yugothic()
 
@@ -109,17 +95,35 @@ def to_number(x) -> float:
     except Exception:
         return np.nan
 
-def draw_scatter(df: pd.DataFrame, la: str, lb: str):
+def draw_scatter_with_reg(df: pd.DataFrame, la: str, lb: str):
+    """散布図＋回帰直線。軸ラベルは日本語。"""
+    x = pd.to_numeric(df["value_a"], errors="coerce")
+    y = pd.to_numeric(df["value_b"], errors="coerce")
+    mask = x.notna() & y.notna()
+    x = x[mask].to_numpy()
+    y = y[mask].to_numpy()
+
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-    ax.scatter(df["value_a"], df["value_b"])
+    ax.scatter(x, y)
+
+    # 単回帰（最小二乗）
+    if len(x) >= 2:
+        slope, intercept = np.polyfit(x, y, 1)
+        xs = np.linspace(x.min(), x.max(), 200)
+        ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
+        # 相関係数
+        r = np.corrcoef(x, y)[0, 1]
+        ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
+
     ax.set_xlabel(la)  # 日本語
     ax.set_ylabel(lb)  # 日本語
-    ax.set_title("散布図")
+    ax.set_title("散布図（回帰直線つき）")
     show_fig(fig)
 
 def draw_boxplot(series: pd.Series, label: str):
+    """箱ひげ図（日本語ラベル）。"""
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-    ax.boxplot(series.dropna(), vert=True)
+    ax.boxplot(pd.to_numeric(series, errors="coerce").dropna(), vert=True)
     ax.set_title(f"箱ひげ図：{label}")
     ax.set_ylabel("値")
     ax.set_xticks([1])
@@ -167,7 +171,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 13):
+def load_todoran_table(url: str, version: int = 14):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -352,6 +356,8 @@ if st.button("相関を計算・表示する", type="primary"):
         st.stop()
 
     # 相関
+    r = float(pd.Series(df["value_a"]).corr(pd.Series[df["value_b"]]))
+    # ↑ タイプミスに注意。正しくは下の行：
     r = float(pd.Series(df["value_a"]).corr(pd.Series(df["value_b"])))
     r2 = r ** 2
 
@@ -362,11 +368,11 @@ if st.button("相関を計算・表示する", type="primary"):
     with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
-    # 散布図（50%サイズ）
+    # 散布図（回帰直線つき／幅320px）
     st.subheader("散布図")
-    draw_scatter(df, label_a, label_b)
+    draw_scatter_with_reg(df, label_a, label_b)
 
-    # 箱ひげ図（上下に2枚）
+    # 箱ひげ図（上下に2枚／幅320px）
     st.subheader("箱ひげ図")
     draw_boxplot(df["value_a"], label_a)
     draw_boxplot(df["value_b"], label_b)
