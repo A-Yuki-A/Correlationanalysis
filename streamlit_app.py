@@ -3,6 +3,7 @@
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
 # 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示する。
+# さらに、散布図・箱ひげ図を既定の66%サイズで描画し、日本語ラベル対応。
 
 import re
 import numpy as np
@@ -21,6 +22,11 @@ st.write(
     "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
     "ページ内の **表タイトル** をグラフや表のラベルに反映します。"
 )
+
+# -------------------- 図サイズ（66%） --------------------
+FIG_SCALE = 0.66
+BASE_W, BASE_H = 6.4, 4.8  # matplotlibの既定サイズ
+FIGSIZE = (BASE_W * FIG_SCALE, BASE_H * FIG_SCALE)
 
 # -------------------- 日本語フォント設定（自動検出） --------------------
 def set_japanese_font():
@@ -93,17 +99,22 @@ def five_number_summary(series: pd.Series):
     )
 
 def draw_scatter(df: pd.DataFrame, la: str, lb: str):
-    fig, ax = plt.subplots()
+    # 66%サイズ、軸ラベルを日本語表記
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.scatter(df["value_a"], df["value_b"])
-    ax.set_xlabel(la)
-    ax.set_ylabel(lb)
+    ax.set_xlabel(la)     # x軸：データAの日本語ラベル
+    ax.set_ylabel(lb)     # y軸：データBの日本語ラベル
     ax.set_title("散布図")
     st.pyplot(fig)
 
 def draw_boxplot(series: pd.Series, label: str):
-    fig, ax = plt.subplots()
+    # 66%サイズ、項目名も日本語で表示
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.boxplot(series.dropna(), vert=True)
     ax.set_title(f"箱ひげ図：{label}")
+    ax.set_ylabel("値")             # y軸名を日本語で
+    ax.set_xticks([1])
+    ax.set_xticklabels([label])    # x軸に項目ラベル（日本語）
     st.pyplot(fig)
 
 def flatten_columns(cols) -> list:
@@ -150,7 +161,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 8):
+def load_todoran_table(url: str, version: int = 9):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -351,11 +362,11 @@ if st.button("相関を計算・表示する", type="primary"):
     with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
-    # 散布図（軸ラベルに表タイトル）
+    # 散布図（軸ラベルに日本語タイトル）
     st.subheader("散布図")
     draw_scatter(df, label_a, label_b)
 
-    # 箱ひげ図と5数要約（タイトルに表タイトル）
+    # 箱ひげ図と5数要約（項目名を日本語で）
     st.subheader("箱ひげ図 と 四分位数")
     b1, b2 = st.columns(2)
     with b1:
