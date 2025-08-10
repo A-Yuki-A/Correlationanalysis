@@ -5,3 +5,4 @@ numpy>=1.26
 requests>=2.32
 beautifulsoup4>=4.12
 lxml>=5.2
+japanize-matplotlib>=1.1.3
