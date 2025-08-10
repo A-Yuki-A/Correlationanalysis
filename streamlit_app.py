@@ -32,7 +32,7 @@ else:
             pass
 plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の豆腐回避
 
-st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
+st.set_page_config(page_title="CorrGraph", layout="wide")
 st.title("CorrGraph")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
