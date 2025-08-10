@@ -2,9 +2,8 @@
 # とどランのランキング記事URLを2つ貼り付けて、
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
-# 相関係数・決定係数・散布図・箱ひげ図を表示する。
-# 図は PNG化して st.image(width=...) で “実寸50%（320px幅）” に確実に縮小表示。
-# 散布図には回帰直線を追加。
+# 相関係数・決定係数・散布図（回帰直線つき）・箱ひげ図を表示。
+# 図は PNG 化して st.image(width=...) で“実寸50%（幅320px）”に固定表示。
 # Matplotlib のフォントは Yu Gothic を最優先（無ければ日本語フォントに自動フォールバック）。
 
 import io
@@ -23,14 +22,13 @@ st.title("都道府県データ 相関ツール（URL版）")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
     "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
-    "ページ内の **表タイトル** をグラフや表のラベルに反映します。"
+    "ページ内の **表タイトル** をグラフのラベルに反映します。"
 )
 
 # -------------------- “見た目50%” を厳密に実現 --------------------
-# Matplotlib 既定サイズ 6.4inch × 100dpi = 640px を基準に、50% = 320px で表示。
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8     # 論理サイズ
 EXPORT_DPI = 200                        # 保存時DPI（高精細）
-BASE_W_PX = int(BASE_W_INCH * 100)      # 640px（基準）
+BASE_W_PX = int(BASE_W_INCH * 100)      # 640px（matplotlib既定換算）
 DISPLAY_WIDTH_PX = int(BASE_W_PX * 0.50)  # 50% → 320px
 
 def show_fig(fig):
@@ -171,11 +169,11 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 14):
+def load_todoran_table(url: str, version: int = 15):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
-    - label: グラフや表に使う日本語ラベル（caption > h1/title > 値列名）
+    - label: グラフに使う日本語ラベル（caption > h1/title > 値列名）
     を返す。
     """
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
@@ -278,6 +276,7 @@ def load_todoran_table(url: str, version: int = 14):
 
         return None, None
 
+    # read_html の各表を試し、caption をラベル候補に使う
     for idx, raw in enumerate(tables):
         got, val_col = pick_value_dataframe(raw)
         if got is not None:
@@ -355,10 +354,11 @@ if st.button("相関を計算・表示する", type="primary"):
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
         st.stop()
 
-    # 相関
-    r = float(pd.Series(df["value_a"]).corr(pd.Series[df["value_b"]]))
-    # ↑ タイプミスに注意。正しくは下の行：
-    r = float(pd.Series(df["value_a"]).corr(pd.Series(df["value_b"])))
+    # 相関（←ここを確実版に差し替え）
+    x = pd.to_numeric(df["value_a"], errors="coerce")
+    y = pd.to_numeric(df["value_b"], errors="coerce")
+    mask = x.notna() & y.notna()
+    r = float(x[mask].corr(y[mask]))
     r2 = r ** 2
 
     st.subheader("相関の結果")
