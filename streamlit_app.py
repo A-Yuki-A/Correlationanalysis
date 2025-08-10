@@ -115,4 +115,167 @@ def load_todoran_table(url: str, version: int = 5) -> pd.DataFrame:
         if not pref_cols:
             return None
 
-        value_candidates = [c for c in cols if ("偏差値" not in c) an]()_
+        value_candidates = [c for c in cols if ("偏差値" not in c) and (c not in ("順位", "都道府県", "道府県", "県名", "府県"))]
+        if not value_candidates:
+            return None
+
+        best_score = -1
+        best_df = None
+        for pref_col in pref_cols:
+            use_cols = [pref_col] + value_candidates
+            # 存在チェック（ユニーク化の過程で名前がズレることに備え）
+            use_cols = [c for c in use_cols if c in df.columns]
+            if not use_cols or pref_col not in use_cols:
+                continue
+
+            work = df[use_cols].copy()
+
+            # pref列がDataFrame化する事故を避ける（常にSeries化）
+            pref_series = work[pref_col]
+            if isinstance(pref_series, pd.DataFrame):
+                pref_series = pref_series.iloc[:, 0]
+
+            # Series.strは使わず安全にトリム → ブールマスクは NumPy配列で適用
+            pref_series = pref_series.map(lambda x: str(x).strip())
+            mask = pref_series.isin(PREF_SET).to_numpy()
+            work = work.loc[mask].copy()
+            if work.empty:
+                continue
+
+            for vc in value_candidates:
+                if vc not in work.columns:
+                    continue
+                nums = pd.to_numeric(work[vc].apply(to_number), errors="coerce")
+                score = int(nums.notna().sum())
+                if score > best_score:
+                    w2 = pd.DataFrame({"pref": pref_series.loc[mask].values, "value": nums.values})
+                    w2 = w2.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
+                    best_score = score
+                    best_df = w2
+
+        # 「十分に数値が取れている」ものだけ採用（目安：30件以上）
+        if best_df is not None and best_score >= 30 and not best_df.empty:
+            best_df["pref"] = pd.Categorical(best_df["pref"], categories=PREFS, ordered=True)
+            best_df = best_df.sort_values("pref").reset_index(drop=True)
+            return best_df
+        return None
+
+    # 1) pandas.read_html で表抽出（複数ある想定）
+    tables = []
+    try:
+        tables = pd.read_html(html, flavor="lxml")
+    except Exception:
+        try:
+            tables = pd.read_html(html, flavor="bs4")
+        except Exception:
+            tables = []
+
+    for raw in tables:
+        got = pick_value_dataframe(raw)
+        if got is not None:
+            return got
+
+    # 2) フォールバック：ページテキストからの簡易抽出
+    soup = BeautifulSoup(html, "lxml")
+    lines = []
+    for tag in soup.find_all(text=True):
+        t = str(tag).strip()
+        if t:
+            lines.append(t)
+    text = "\n".join(lines)
+
+    rows = []
+    for line in text.splitlines():
+        # 例: "1 滋賀県 81.78歳 69.77" から「滋賀県 81.78」を拾う
+        m = re.search(r"(北海道|..県|..府|東京都)\s+(-?\d+(?:\.\d+)?)", line)
+        if m:
+            pref = m.group(1)
+            val = float(m.group(2))
+            if pref in PREF_SET:
+                rows.append((pref, val))
+
+    if rows:
+        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
+        work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
+        work = work.sort_values("pref").reset_index(drop=True)
+        return work
+
+    # 3) それでも無理なら空
+    return pd.DataFrame(columns=["pref", "value"])
+
+# ---- UI ----------------------------------------------------------------------
+c1, c2 = st.columns(2)
+with c1:
+    url_a = st.text_input("データAのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/XXXXX")
+with c2:
+    url_b = st.text_input("データBのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/YYYYY")
+
+if st.button("相関を計算・表示する", type="primary"):
+    if not url_a or not url_b:
+        st.error("2つのURLを入力してください。")
+        st.stop()
+    try:
+        df_a = load_todoran_table(url_a)
+        df_b = load_todoran_table(url_b)
+    except requests.RequestException as e:
+        st.error(f"ページの取得に失敗しました：{e}")
+        st.stop()
+
+    if df_a.empty or df_b.empty:
+        st.error("表の抽出に失敗しました。URLがランキング記事であること、表に『都道府県』列があることを確認してください。")
+        st.stop()
+
+    # 共通都道府県で結合
+    df = pd.merge(
+        df_a.rename(columns={"value": "value_a"}),
+        df_b.rename(columns={"value": "value_b"}),
+        on="pref",
+        how="inner",
+    )
+
+    st.subheader("結合後のデータ（共通の都道府県のみ）")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    if len(df) < 3:
+        st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
+        st.stop()
+
+    # 相関
+    r = float(pd.Series(df["value_a"]).corr(pd.Series(df["value_b"])))
+    r2 = r ** 2
+
+    st.subheader("相関の結果")
+    m1, m2 = st.columns(2)
+    with m1:
+        st.metric("相関係数 r（ピアソン）", f"{r:.4f}")
+    with m2:
+        st.metric("決定係数 R²", f"{r2:.4f}")
+
+    # 散布図
+    st.subheader("散布図")
+    draw_scatter(df, "データA", "データB")
+
+    # 箱ひげ図と5数要約
+    st.subheader("箱ひげ図 と 四分位数（A と B）")
+    b1, b2 = st.columns(2)
+    with b1:
+        draw_boxplot(df["value_a"], "データA")
+        a_summary = five_number_summary(df["value_a"])
+        st.markdown("**データAの5数要約**")
+        st.table(pd.DataFrame(a_summary, index=["値"]))
+    with b2:
+        draw_boxplot(df["value_b"], "データB")
+        b_summary = five_number_summary(df["value_b"])
+        st.markdown("**データBの5数要約**")
+        st.table(pd.DataFrame(b_summary, index=["値"]))
+
+    # CSVダウンロード
+    csv = df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "結合データをCSVで保存",
+        data=csv,
+        file_name="todoran_merged.csv",
+        mime="text/csv",
+    )
+else:
+    st.info("上の2つの入力欄に とどラン記事のURL を貼ってから「相関を計算・表示する」を押してください。")
