@@ -16,6 +16,27 @@ import requests
 from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 
+from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# リポジトリ同梱フォントを最優先で使う
+fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # ← ここが置いたファイル
+if fp.exists():
+    fm.fontManager.addfont(str(fp))
+    plt.rcParams["font.family"] = "Source Han Code JP"  # 家族名
+else:
+    # フォールバック（他の日本語フォントを順に試す）
+    for name in ["Noto Sans JP","IPAexGothic","Yu Gothic","Hiragino Sans","Meiryo"]:
+        try:
+            fm.findfont(fm.FontProperties(family=name), fallback_to_default=False)
+            plt.rcParams["font.family"] = name
+            break
+        except Exception:
+            pass
+
+plt.rcParams["axes.unicode_minus"] = False  # マイナス記号が□になるのを防ぐ
+
 # --- 日本語化（japanize があれば使う） ---
 try:
     import japanize_matplotlib  # noqa: F401
