@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+from pandas.api.types import is_scalar
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
@@ -29,11 +30,14 @@ PREFS = [
 PREF_SET = set(PREFS)
 
 # ---- ユーティリティ ----------------------------------------------------------
-def to_number(s: str) -> float:
-    """文字列から数値（小数含む）を抜き出して float 化。単位や%は無視。失敗時はNaN。"""
-    if pd.isna(s):
-        return np.nan
-    s = str(s).replace(",", "").replace("　", " ").replace("％", "%")
+def to_number(x) -> float:
+    """文字列から数値（小数含む）を抜き出して float 化。配列/Seriesが来ても安全。単位や%は無視。"""
+    if not is_scalar(x):
+        try:
+            x = x.item()  # 0次元ndarrayなど
+        except Exception:
+            return np.nan
+    s = str(x).replace(",", "").replace("　", " ").replace("％", "%").strip()
     m = re.search(r"-?\d+(?:\.\d+)?", s)
     if not m:
         return np.nan
@@ -82,7 +86,7 @@ def flatten_columns(cols) -> list:
     return [str(c).strip() for c in cols]
 
 def make_unique(seq: list) -> list:
-    """重複列名を強制的にユニーク化（同名が来たら __2, __3 を付与）"""
+    """重複列名を強制ユニーク化（同名が来たら __2, __3 を付与）"""
     seen = {}
     out = []
     for c in seq:
@@ -96,19 +100,17 @@ def make_unique(seq: list) -> list:
 
 # ---- とどランURL → (pref, value) DataFrame -----------------------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 5) -> pd.DataFrame:
+def load_todoran_table(url: str, version: int = 6) -> pd.DataFrame:
     """とどラン記事URLから、『都道府県』と『偏差値でない実数値の列』を自動抽出して返す。"""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
 
-    # 候補テーブルから「都道府県」列＋「偏差値でない数値列」を選ぶ
     def pick_value_dataframe(df: pd.DataFrame):
         df = df.copy()
-        df.columns = make_unique(flatten_columns(df.columns))  # ← 列名を必ずユニーク化
-        # 列名重複をさらに安全側で除去（理屈上は不要だが保険）
-        df = df.loc[:, ~df.columns.duplicated()]
+        df.columns = make_unique(flatten_columns(df.columns))  # 列名を必ずユニーク化
+        df = df.loc[:, ~df.columns.duplicated()]               # 念のための保険
 
         cols = list(df.columns)
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名", "道府県", "府県"))]
@@ -122,45 +124,47 @@ def load_todoran_table(url: str, version: int = 5) -> pd.DataFrame:
         best_score = -1
         best_df = None
         for pref_col in pref_cols:
-            use_cols = [pref_col] + value_candidates
-            # 存在チェック（ユニーク化の過程で名前がズレることに備え）
-            use_cols = [c for c in use_cols if c in df.columns]
-            if not use_cols or pref_col not in use_cols:
+            use_cols = [pref_col] + [c for c in value_candidates if c in df.columns]
+            if pref_col not in use_cols:
                 continue
-
             work = df[use_cols].copy()
 
-            # pref列がDataFrame化する事故を避ける（常にSeries化）
+            # 県名列をSeriesとして安全にトリム
             pref_series = work[pref_col]
             if isinstance(pref_series, pd.DataFrame):
                 pref_series = pref_series.iloc[:, 0]
-
-            # Series.strは使わず安全にトリム → ブールマスクは NumPy配列で適用
             pref_series = pref_series.map(lambda x: str(x).strip())
+
+            # 47都道府県だけ残す（ブール配列で安全に）
             mask = pref_series.isin(PREF_SET).to_numpy()
-            work = work.loc[mask].copy()
-            if work.empty:
+            if not mask.any():
                 continue
+            work = work.loc[mask].copy()
+            pref_kept = pref_series.loc[mask].copy()
 
             for vc in value_candidates:
                 if vc not in work.columns:
                     continue
-                nums = pd.to_numeric(work[vc].apply(to_number), errors="coerce")
+                col = work[vc]
+                if isinstance(col, pd.DataFrame):
+                    col = col.iloc[:, 0]
+                col = col.map(to_number)
+                nums = pd.to_numeric(col, errors="coerce")
+
                 score = int(nums.notna().sum())
                 if score > best_score:
-                    w2 = pd.DataFrame({"pref": pref_series.loc[mask].values, "value": nums.values})
-                    w2 = w2.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
+                    tmp = pd.DataFrame({"pref": pref_kept.values, "value": nums.values})
+                    tmp = tmp.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
                     best_score = score
-                    best_df = w2
+                    best_df = tmp
 
-        # 「十分に数値が取れている」ものだけ採用（目安：30件以上）
         if best_df is not None and best_score >= 30 and not best_df.empty:
             best_df["pref"] = pd.Categorical(best_df["pref"], categories=PREFS, ordered=True)
             best_df = best_df.sort_values("pref").reset_index(drop=True)
             return best_df
         return None
 
-    # 1) pandas.read_html で表抽出（複数ある想定）
+    # 1) pandas.read_html で表抽出（複数ありうる）
     tables = []
     try:
         tables = pd.read_html(html, flavor="lxml")
