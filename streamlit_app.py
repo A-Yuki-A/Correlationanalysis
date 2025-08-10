@@ -3,9 +3,8 @@
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
 # 相関係数・決定係数・散布図（回帰直線つき）・箱ひげ図を表示。
-# 画像はPNG化→st.image(width=...)でサイズを明示。
 # 散布図は幅640px（前より2倍）、箱ひげ図は左右に横並び。
-# Matplotlibは japanize-matplotlib で日本語化（無い環境はフォント自動検出でフォールバック）。
+# Matplotlibは japanize-matplotlib で日本語化（無い環境はフォールバック）。
 
 import io
 import re
@@ -53,7 +52,7 @@ st.write(
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
 EXPORT_DPI = 200                 # PNG保存時のDPI（高精細）
 SCATTER_WIDTH_PX = 640           # 散布図は前の2倍（640px）
-BOX_WIDTH_PX = 320               # 箱ひげ図は従来サイズ（320px）を横並びで
+BOX_WIDTH_PX = 320               # 箱ひげ図は左右に横並び用（各320px）
 
 def show_fig(fig, width_px: int):
     """figをPNGにして、指定px幅で確実に表示。"""
@@ -175,7 +174,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 16):
+def load_todoran_table(url: str, version: int = 17):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -312,7 +311,8 @@ def load_todoran_table(url: str, version: int = 16):
                 rows.append((pref, val))
 
     if rows:
-        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref"])
+        # 👇 ここを修正：余分な ']' を削除
+        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
         work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
         label = compose_label(None, None, page_h1 or page_title)
@@ -360,7 +360,7 @@ if st.button("相関を計算・表示する", type="primary"):
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
         st.stop()
 
-    # 相関（数値表示）
+    # 相関（指定の表記で出力）
     x = pd.to_numeric(df["value_a"], errors="coerce")
     y = pd.to_numeric(df["value_b"], errors="coerce")
     mask = x.notna() & y.notna()
