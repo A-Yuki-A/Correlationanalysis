@@ -1,12 +1,14 @@
 # streamlit_app.py
 # とどランのランキング記事URLを2つ貼り付けて、
-# 「都道府県 × 実数値（偏差値は除外）」を自動抽出し、
-# 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示するアプリ
+# 「都道府県 × 実数値（偏差値は除外）」を自動抽出。
+# さらに、ページ内の表タイトル（<caption> や <h1>）をラベルに使い、
+# 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示する。
 
 import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -16,8 +18,27 @@ st.set_page_config(page_title="都道府県データ 相関ツール（URL版）
 st.title("都道府県データ 相関ツール（URL版）")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
-    "表の「偏差値」列は使わず、**実数の値**（人数・金額・割合など）を自動抽出します。"
+    "表の「偏差値」列は使わず、**実数の値**（人数・金額・割合など）を自動抽出し、"
+    "ページ内の **表タイトル** をグラフや表のラベルに反映します。"
 )
+
+# ---- 日本語フォント設定（見つかったものを自動使用） --------------------------
+def set_japanese_font():
+    candidates = [
+        "Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic",
+        "Yu Gothic", "Hiragino Sans", "Meiryo", "TakaoGothic", "VL PGothic"
+    ]
+    for name in candidates:
+        try:
+            prop = fm.FontProperties(family=name)
+            fm.findfont(prop, fallback_to_default=False)  # 見つからなければ例外
+            plt.rcParams["font.family"] = name
+            break
+        except Exception:
+            continue
+    plt.rcParams["axes.unicode_minus"] = False
+
+set_japanese_font()
 
 # ---- 47都道府県 --------------------------------------------------------------
 PREFS = [
@@ -98,31 +119,65 @@ def make_unique(seq: list) -> list:
             out.append(c)
     return out
 
-# ---- とどランURL → (pref, value) DataFrame -----------------------------------
+# ---- ラベル生成（caption > h1 > 値列名） -------------------------------------
+def compose_label(caption: str | None, val_col: str | None, page_title: str | None) -> str:
+    for s in (caption, page_title, val_col, "データ"):
+        if s and str(s).strip():
+            return str(s).strip()
+    return "データ"
+
+# ---- とどランURL → (DataFrame, ラベル) ----------------------------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 6) -> pd.DataFrame:
-    """とどラン記事URLから、『都道府県』と『偏差値でない実数値の列』を自動抽出して返す。"""
+def load_todoran_table(url: str, version: int = 7):
+    """
+    とどラン記事URLから、
+    - df: columns = ['pref','value']（都道府県と実数値）
+    - label: グラフや表に使う日本語ラベル（caption > h1 > 値列名）
+    を返す。
+    """
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
+    soup = BeautifulSoup(html, "lxml")
+
+    # ページの h1 / title
+    page_h1 = None
+    h1 = soup.find("h1")
+    if h1:
+        page_h1 = h1.get_text(strip=True)
+    page_title = soup.title.get_text(strip=True) if soup.title else None
+
+    # pandas.read_html で表抽出
+    try:
+        tables = pd.read_html(html, flavor="lxml")
+    except Exception:
+        try:
+            tables = pd.read_html(html, flavor="bs4")
+        except Exception:
+            tables = []
+
+    bs_tables = soup.find_all("table")  # caption ひろう用（順序は概ね対応する）
 
     def pick_value_dataframe(df: pd.DataFrame):
         df = df.copy()
-        df.columns = make_unique(flatten_columns(df.columns))  # 列名を必ずユニーク化
-        df = df.loc[:, ~df.columns.duplicated()]               # 念のための保険
+        df.columns = make_unique(flatten_columns(df.columns))  # 列名ユニーク化
+        df = df.loc[:, ~df.columns.duplicated()]
 
         cols = list(df.columns)
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名", "道府県", "府県"))]
         if not pref_cols:
-            return None
+            return None, None  # (df, value_col)
 
-        value_candidates = [c for c in cols if ("偏差値" not in c) and (c not in ("順位", "都道府県", "道府県", "県名", "府県"))]
+        value_candidates = [c for c in cols
+                            if ("偏差値" not in c)
+                            and (c not in ("順位", "都道府県", "道府県", "県名", "府県"))]
         if not value_candidates:
-            return None
+            return None, None
 
         best_score = -1
         best_df = None
+        best_vc = None
         for pref_col in pref_cols:
             use_cols = [pref_col] + [c for c in value_candidates if c in df.columns]
             if pref_col not in use_cols:
@@ -157,30 +212,28 @@ def load_todoran_table(url: str, version: int = 6) -> pd.DataFrame:
                     tmp = tmp.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
                     best_score = score
                     best_df = tmp
+                    best_vc = vc
 
         if best_df is not None and best_score >= 30 and not best_df.empty:
             best_df["pref"] = pd.Categorical(best_df["pref"], categories=PREFS, ordered=True)
             best_df = best_df.sort_values("pref").reset_index(drop=True)
-            return best_df
-        return None
+            return best_df, best_vc
+        return None, None
 
-    # 1) pandas.read_html で表抽出（複数ありうる）
-    tables = []
-    try:
-        tables = pd.read_html(html, flavor="lxml")
-    except Exception:
-        try:
-            tables = pd.read_html(html, flavor="bs4")
-        except Exception:
-            tables = []
-
-    for raw in tables:
-        got = pick_value_dataframe(raw)
+    # read_html で拾えた表から順に試す
+    for idx, raw in enumerate(tables):
+        got, val_col = pick_value_dataframe(raw)
         if got is not None:
-            return got
+            # caption を試す
+            caption_text = None
+            if idx < len(bs_tables):
+                cap = bs_tables[idx].find("caption")
+                if cap:
+                    caption_text = cap.get_text(strip=True)
+            label = compose_label(caption_text, val_col, page_h1 or page_title)
+            return got, label
 
-    # 2) フォールバック：ページテキストからの簡易抽出
-    soup = BeautifulSoup(html, "lxml")
+    # フォールバック：ページテキストから簡易抽出（ラベルは h1/title）
     lines = []
     for tag in soup.find_all(text=True):
         t = str(tag).strip()
@@ -202,10 +255,11 @@ def load_todoran_table(url: str, version: int = 6) -> pd.DataFrame:
         work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
         work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
-        return work
+        label = compose_label(None, None, page_h1 or page_title)
+        return work, label
 
-    # 3) それでも無理なら空
-    return pd.DataFrame(columns=["pref", "value"])
+    # それでも無理なら空
+    return pd.DataFrame(columns=["pref", "value"]), "データ"
 
 # ---- UI ----------------------------------------------------------------------
 c1, c2 = st.columns(2)
@@ -219,8 +273,8 @@ if st.button("相関を計算・表示する", type="primary"):
         st.error("2つのURLを入力してください。")
         st.stop()
     try:
-        df_a = load_todoran_table(url_a)
-        df_b = load_todoran_table(url_b)
+        df_a, label_a = load_todoran_table(url_a)
+        df_b, label_b = load_todoran_table(url_b)
     except requests.RequestException as e:
         st.error(f"ページの取得に失敗しました：{e}")
         st.stop()
@@ -237,8 +291,11 @@ if st.button("相関を計算・表示する", type="primary"):
         how="inner",
     )
 
+    # 表示用は列名にラベルを使う（計算用の内部列はそのまま）
+    display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
+
     st.subheader("結合後のデータ（共通の都道府県のみ）")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
@@ -251,32 +308,32 @@ if st.button("相関を計算・表示する", type="primary"):
     st.subheader("相関の結果")
     m1, m2 = st.columns(2)
     with m1:
-        st.metric("相関係数 r（ピアソン）", f"{r:.4f}")
+        st.metric(f"相関係数 r（ピアソン）｜{label_a} × {label_b}", f"{r:.4f}")
     with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
-    # 散布図
+    # 散布図（軸ラベルに表タイトル）
     st.subheader("散布図")
-    draw_scatter(df, "データA", "データB")
+    draw_scatter(df, label_a, label_b)
 
-    # 箱ひげ図と5数要約
-    st.subheader("箱ひげ図 と 四分位数（A と B）")
+    # 箱ひげ図と5数要約（タイトルに表タイトル）
+    st.subheader("箱ひげ図 と 四分位数")
     b1, b2 = st.columns(2)
     with b1:
-        draw_boxplot(df["value_a"], "データA")
+        draw_boxplot(df["value_a"], label_a)
         a_summary = five_number_summary(df["value_a"])
-        st.markdown("**データAの5数要約**")
+        st.markdown(f"**{label_a} の5数要約**")
         st.table(pd.DataFrame(a_summary, index=["値"]))
     with b2:
-        draw_boxplot(df["value_b"], "データB")
+        draw_boxplot(df["value_b"], label_b)
         b_summary = five_number_summary(df["value_b"])
-        st.markdown("**データBの5数要約**")
+        st.markdown(f"**{label_b} の5数要約**")
         st.table(pd.DataFrame(b_summary, index=["値"]))
 
-    # CSVダウンロード
+    # CSVダウンロード（列名は内部名のまま：分析向け）
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "結合データをCSVで保存",
+        "結合データをCSVで保存（内部列名：value_a/value_b）",
         data=csv,
         file_name="todoran_merged.csv",
         mime="text/csv",
