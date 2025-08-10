@@ -2,7 +2,6 @@
 # とどランURL×2 → 都道府県の「総数」データを抽出し、
 # 外れ値あり／外れ値除外の散布図（横並び・回帰直線つき）を表示。
 # 各散布図の直下に n・相関係数r・決定係数r2 を表示。
-# 入力UIは X=説明変数 / Y=目的変数 を意識させる文言を追加。
 # 最下部に外れ値の定義（IQR法）を記載。
 
 import io
@@ -17,18 +16,12 @@ from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
 
-# ===【ここから：ご指定のフォント設定ブロック（importsの直後に追加）】===
-from pathlib import Path
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-
-# リポジトリ同梱フォントを最優先で使う
-fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # ← ここが置いたファイル
+# === フォント設定：同梱フォント最優先（なければシステム → japanize相当） ===
+fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # 置いたフォント
 if fp.exists():
     fm.fontManager.addfont(str(fp))
     plt.rcParams["font.family"] = "Source Han Code JP"  # 家族名
 else:
-    # フォールバック（他の日本語フォントを順に試す）
     for name in ["Noto Sans JP","IPAexGothic","Yu Gothic","Hiragino Sans","Meiryo"]:
         try:
             fm.findfont(fm.FontProperties(family=name), fallback_to_default=False)
@@ -36,16 +29,14 @@ else:
             break
         except Exception:
             pass
-
-plt.rcParams["axes.unicode_minus"] = False  # マイナス記号が□になるのを防ぐ
-# ===【ここまで】===
+plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の豆腐回避
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
     "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
-    "ページ内の **表タイトル** をグラフのラベルに反映します（日本語対応）。"
+    "ページ内の **表タイトル** をグラフのラベルに反映します。"
 )
 
 # -------------------- 表示サイズ --------------------
@@ -289,29 +280,20 @@ def load_todoran_table(url: str, version: int = 24):
 
     return pd.DataFrame(columns=["pref","value"]), "データ"
 
-# -------------------- UI（X=説明変数 / Y=目的変数 を意識させる） --------------------
-st.markdown("### 入力の考え方（重要）")
-st.info(
-    "**X軸（説明変数）**：説明する側（原因・条件）\n\n"
-    "**Y軸（目的変数）**：説明される側（結果）"
-)
-
+# -------------------- UI（説明ブロックなし・最小） --------------------
 c1, c2 = st.columns(2)
 with c1:
     url_a = st.text_input(
         "X軸（説明変数）URL ＝ 原因・条件の指標",
         placeholder="https://todo-ran.com/t/kiji/XXXXX",
-        help="例：勉強時間、気温、広告費、人口、世帯数、施設数、販売額 など（総数の指標）"
+        help="総数の指標を選んでください（順位・偏差値は不可）"
     )
-    st.caption("例：勉強時間／気温／広告費／人口 など（Xを変えたらYがどう変わるかを見る）")
-
 with c2:
     url_b = st.text_input(
         "Y軸（目的変数）URL ＝ 結果・反応の指標",
         placeholder="https://todo-ran.com/t/kiji/YYYYY",
-        help="例：テストの点数、売上、家賃、電力消費量、事故件数、来場者数 など（総数の指標）"
+        help="総数の指標を選んでください（順位・偏差値は不可）"
     )
-    st.caption("例：テストの点数／売上／家賃／電力消費量／来場者数 など（YはXに応じて変わると考える）")
 
 # -------------------- メイン処理 --------------------
 if st.button("相関を計算・表示する", type="primary"):
