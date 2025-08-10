@@ -3,8 +3,9 @@
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
 # 相関係数・決定係数・散布図（回帰直線つき）・箱ひげ図を表示。
-# 図は PNG 化して st.image(width=...) で“実寸50%（幅320px）”に固定表示。
-# Matplotlib のフォントは Yu Gothic を最優先（無ければ日本語フォントに自動フォールバック）。
+# 画像はPNG化→st.image(width=...)でサイズを明示。
+# 散布図は幅640px（前より2倍）、箱ひげ図は左右に横並び。
+# Matplotlibは japanize-matplotlib で日本語化（無い環境はフォント自動検出でフォールバック）。
 
 import io
 import re
@@ -17,6 +18,28 @@ import requests
 from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 
+# --- 日本語化（japanize があれば使う） ---
+try:
+    import japanize_matplotlib  # noqa: F401
+    plt.rcParams["axes.unicode_minus"] = False
+except Exception:
+    # フォールバック：手元にある日本語フォントを自動検出
+    def _set_jp_font_fallback():
+        candidates = [
+            "Yu Gothic", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP",
+            "IPAexGothic", "IPAGothic", "Hiragino Sans", "Meiryo",
+        ]
+        for name in candidates:
+            try:
+                prop = fm.FontProperties(family=name)
+                fm.findfont(prop, fallback_to_default=False)
+                plt.rcParams["font.family"] = name
+                break
+            except Exception:
+                continue
+        plt.rcParams["axes.unicode_minus"] = False
+    _set_jp_font_fallback()
+
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
 st.write(
@@ -25,35 +48,20 @@ st.write(
     "ページ内の **表タイトル** をグラフのラベルに反映します。"
 )
 
-# -------------------- “見た目50%” を厳密に実現 --------------------
-BASE_W_INCH, BASE_H_INCH = 6.4, 4.8     # 論理サイズ
-EXPORT_DPI = 200                        # 保存時DPI（高精細）
-BASE_W_PX = int(BASE_W_INCH * 100)      # 640px（matplotlib既定換算）
-DISPLAY_WIDTH_PX = int(BASE_W_PX * 0.50)  # 50% → 320px
+# -------------------- 画像表示サイズ --------------------
+# Matplotlib 既定換算: 6.4inch * 100dpi = 640px
+BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
+EXPORT_DPI = 200                 # PNG保存時のDPI（高精細）
+SCATTER_WIDTH_PX = 640           # 散布図は前の2倍（640px）
+BOX_WIDTH_PX = 320               # 箱ひげ図は従来サイズ（320px）を横並びで
 
-def show_fig(fig):
-    """figをPNGにして、幅320pxで確実に縮小表示。"""
+def show_fig(fig, width_px: int):
+    """figをPNGにして、指定px幅で確実に表示。"""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     buf.seek(0)
-    st.image(buf, width=DISPLAY_WIDTH_PX)
+    st.image(buf, width=width_px)
     plt.close(fig)
-
-# -------------------- Matplotlib だけ Yu Gothic を使用 --------------------
-def set_matplotlib_font_yugothic():
-    preferred = ["Yu Gothic", "Yu Gothic UI"]
-    fallbacks = ["Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic"]
-    for name in preferred + fallbacks:
-        try:
-            prop = fm.FontProperties(family=name)
-            fm.findfont(prop, fallback_to_default=False)
-            plt.rcParams["font.family"] = name
-            break
-        except Exception:
-            continue
-    plt.rcParams["axes.unicode_minus"] = False
-
-set_matplotlib_font_yugothic()
 
 # -------------------- 47都道府県 --------------------
 PREFS = [
@@ -94,7 +102,7 @@ def to_number(x) -> float:
         return np.nan
 
 def draw_scatter_with_reg(df: pd.DataFrame, la: str, lb: str):
-    """散布図＋回帰直線。軸ラベルは日本語。"""
+    """散布図＋回帰直線（日本語ラベル）。"""
     x = pd.to_numeric(df["value_a"], errors="coerce")
     y = pd.to_numeric(df["value_b"], errors="coerce")
     mask = x.notna() & y.notna()
@@ -104,19 +112,17 @@ def draw_scatter_with_reg(df: pd.DataFrame, la: str, lb: str):
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y)
 
-    # 単回帰（最小二乗）
     if len(x) >= 2:
         slope, intercept = np.polyfit(x, y, 1)
         xs = np.linspace(x.min(), x.max(), 200)
         ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
-        # 相関係数
         r = np.corrcoef(x, y)[0, 1]
         ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
 
     ax.set_xlabel(la)  # 日本語
     ax.set_ylabel(lb)  # 日本語
     ax.set_title("散布図（回帰直線つき）")
-    show_fig(fig)
+    show_fig(fig, SCATTER_WIDTH_PX)
 
 def draw_boxplot(series: pd.Series, label: str):
     """箱ひげ図（日本語ラベル）。"""
@@ -126,7 +132,7 @@ def draw_boxplot(series: pd.Series, label: str):
     ax.set_ylabel("値")
     ax.set_xticks([1])
     ax.set_xticklabels([label])  # 日本語ラベル
-    show_fig(fig)
+    show_fig(fig, BOX_WIDTH_PX)
 
 def flatten_columns(cols) -> list:
     if isinstance(cols, pd.MultiIndex):
@@ -169,7 +175,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 15):
+def load_todoran_table(url: str, version: int = 16):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -306,7 +312,7 @@ def load_todoran_table(url: str, version: int = 15):
                 rows.append((pref, val))
 
     if rows:
-        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
+        work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref"])
         work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
         label = compose_label(None, None, page_h1 or page_title)
@@ -354,7 +360,7 @@ if st.button("相関を計算・表示する", type="primary"):
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
         st.stop()
 
-    # 相関（←ここを確実版に差し替え）
+    # 相関（数値表示）
     x = pd.to_numeric(df["value_a"], errors="coerce")
     y = pd.to_numeric(df["value_b"], errors="coerce")
     mask = x.notna() & y.notna()
@@ -362,20 +368,20 @@ if st.button("相関を計算・表示する", type="primary"):
     r2 = r ** 2
 
     st.subheader("相関の結果")
-    m1, m2 = st.columns(2)
-    with m1:
-        st.metric(f"相関係数 r（ピアソン）｜{label_a} × {label_b}", f"{r:.4f}")
-    with m2:
-        st.metric("決定係数 R²", f"{r2:.4f}")
+    st.markdown(f"**相関係数 r = {r:.4f}**")
+    st.markdown(f"**決定係数 r2 = {r2:.4f}**")
 
-    # 散布図（回帰直線つき／幅320px）
+    # 散布図（回帰直線つき：幅640px）
     st.subheader("散布図")
     draw_scatter_with_reg(df, label_a, label_b)
 
-    # 箱ひげ図（上下に2枚／幅320px）
+    # 箱ひげ図（左右に横並び：各320px）
     st.subheader("箱ひげ図")
-    draw_boxplot(df["value_a"], label_a)
-    draw_boxplot(df["value_b"], label_b)
+    col_left, col_right = st.columns(2)
+    with col_left:
+        draw_boxplot(df["value_a"], label_a)
+    with col_right:
+        draw_boxplot(df["value_b"], label_b)
 
     # CSVダウンロード（内部名のまま保存：分析向け）
     csv = df.to_csv(index=False).encode("utf-8-sig")
