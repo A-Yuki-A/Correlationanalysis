@@ -3,7 +3,8 @@
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
 # 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示する。
-# さらに、散布図・箱ひげ図を既定の66%サイズで描画し、日本語ラベル対応。
+# さらに、散布図・箱ひげ図を既定の50%サイズで描画し、
+# 箱ひげ図は上下に、右横に各データの要約表を表示。
 
 import re
 import numpy as np
@@ -23,9 +24,9 @@ st.write(
     "ページ内の **表タイトル** をグラフや表のラベルに反映します。"
 )
 
-# -------------------- 図サイズ（66%） --------------------
-FIG_SCALE = 0.66
-BASE_W, BASE_H = 6.4, 4.8  # matplotlibの既定サイズ
+# -------------------- 図サイズ（50%） --------------------
+FIG_SCALE = 0.50
+BASE_W, BASE_H = 6.4, 4.8  # matplotlib既定
 FIGSIZE = (BASE_W * FIG_SCALE, BASE_H * FIG_SCALE)
 
 # -------------------- 日本語フォント設定（自動検出） --------------------
@@ -60,7 +61,7 @@ PREF_SET = set(PREFS)
 TOTAL_KEYWORDS = [
     "総数","合計","件数","人数","人口","世帯","戸数","台数","店舗数","病床数","施設数",
     "金額","額","費用","支出","収入","販売額","生産額","生産量","面積","延べ","延",
-    "数",  # （偏差値は別で除外）
+    "数",
 ]
 RATE_WORDS = [
     "率","割合","比率","％","パーセント",
@@ -70,7 +71,7 @@ EXCLUDE_WORDS = ["順位","偏差値"]
 
 # -------------------- ユーティリティ --------------------
 def to_number(x) -> float:
-    """文字列から数値（小数含む）を抜き出して float 化。配列/Seriesが来ても安全。単位や%は無視。"""
+    """文字列から数値（小数含む）を抜き出して float 化。配列/Seriesが来ても安全。"""
     if not is_scalar(x):
         try:
             x = x.item()
@@ -86,7 +87,6 @@ def to_number(x) -> float:
         return np.nan
 
 def five_number_summary(series: pd.Series):
-    """最小, Q1, 中央(Q2), Q3, 最大 を辞書で返す"""
     s = pd.to_numeric(series, errors="coerce").dropna()
     if s.empty:
         return dict(最小値=np.nan, 第1四分位=np.nan, 中央値=np.nan, 第3四分位=np.nan, 最大値=np.nan)
@@ -99,26 +99,23 @@ def five_number_summary(series: pd.Series):
     )
 
 def draw_scatter(df: pd.DataFrame, la: str, lb: str):
-    # 66%サイズ、軸ラベルを日本語表記
     fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.scatter(df["value_a"], df["value_b"])
-    ax.set_xlabel(la)     # x軸：データAの日本語ラベル
-    ax.set_ylabel(lb)     # y軸：データBの日本語ラベル
+    ax.set_xlabel(la)  # 日本語
+    ax.set_ylabel(lb)  # 日本語
     ax.set_title("散布図")
     st.pyplot(fig)
 
 def draw_boxplot(series: pd.Series, label: str):
-    # 66%サイズ、項目名も日本語で表示
     fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.boxplot(series.dropna(), vert=True)
     ax.set_title(f"箱ひげ図：{label}")
-    ax.set_ylabel("値")             # y軸名を日本語で
+    ax.set_ylabel("値")
     ax.set_xticks([1])
-    ax.set_xticklabels([label])    # x軸に項目ラベル（日本語）
+    ax.set_xticklabels([label])  # 日本語ラベル
     st.pyplot(fig)
 
 def flatten_columns(cols) -> list:
-    """MultiIndex列や 'Unnamed' を含む列名を1段の文字列にフラット化"""
     if isinstance(cols, pd.MultiIndex):
         flat = []
         for tup in cols:
@@ -130,7 +127,6 @@ def flatten_columns(cols) -> list:
     return [str(c).strip() for c in cols]
 
 def make_unique(seq: list) -> list:
-    """重複列名をユニーク化（同名が来たら __2, __3 を付与）"""
     seen = {}
     out = []
     for c in seq:
@@ -143,7 +139,6 @@ def make_unique(seq: list) -> list:
     return out
 
 def is_rank_like(nums: pd.Series) -> bool:
-    """1～47（少し余裕で1～60）の整数が大半を占め、重複が少ない → 順位列っぽい"""
     s = pd.to_numeric(nums, errors="coerce").dropna()
     if s.empty:
         return False
@@ -161,7 +156,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 9):
+def load_todoran_table(url: str, version: int = 10):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -177,7 +172,6 @@ def load_todoran_table(url: str, version: int = 9):
     page_h1 = soup.find("h1").get_text(strip=True) if soup.find("h1") else None
     page_title = soup.title.get_text(strip=True) if soup.title else None
 
-    # pandas.read_html で表抽出（複数あることが多い）
     try:
         tables = pd.read_html(html, flavor="lxml")
     except Exception:
@@ -186,7 +180,7 @@ def load_todoran_table(url: str, version: int = 9):
         except Exception:
             tables = []
 
-    bs_tables = soup.find_all("table")  # caption 取得用
+    bs_tables = soup.find_all("table")
 
     def pick_value_dataframe(df: pd.DataFrame):
         df = df.copy()
@@ -237,7 +231,6 @@ def load_todoran_table(url: str, version: int = 9):
                 col_num = pd.to_numeric(col.map(to_number), errors="coerce")
                 col_num = col_num.loc[mask]
 
-                # 順位っぽい列は即除外
                 if is_rank_like(col_num):
                     continue
 
@@ -254,7 +247,6 @@ def load_todoran_table(url: str, version: int = 9):
 
             return best_df, best_vc
 
-        # 1) 総数ワードを含む列を最優先
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, total_name_candidates)
             if got is not None:
@@ -262,7 +254,6 @@ def load_todoran_table(url: str, version: int = 9):
                 got = got.sort_values("pref").reset_index(drop=True)
                 return got, val_col
 
-        # 2) ダメなら率ワードを避けた列から
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, fallback_candidates)
             if got is not None:
@@ -272,7 +263,6 @@ def load_todoran_table(url: str, version: int = 9):
 
         return None, None
 
-    # read_html の各表を試し、caption をラベル候補に使う
     for idx, raw in enumerate(tables):
         got, val_col = pick_value_dataframe(raw)
         if got is not None:
@@ -284,7 +274,6 @@ def load_todoran_table(url: str, version: int = 9):
             label = compose_label(caption_text, val_col, page_h1 or page_title)
             return got, label
 
-    # フォールバック：ページテキストから簡易抽出（ラベルは h1/title）
     lines = []
     for tag in soup.find_all(text=True):
         t = str(tag).strip()
@@ -294,7 +283,6 @@ def load_todoran_table(url: str, version: int = 9):
 
     rows = []
     for line in text.splitlines():
-        # 例: "1 滋賀県 81.78歳 69.77" から「滋賀県 81.78」を拾う
         m = re.search(r"(北海道|..県|..府|東京都)\s+(-?\d+(?:\.\d+)?)", line)
         if m:
             pref = m.group(1)
@@ -362,20 +350,20 @@ if st.button("相関を計算・表示する", type="primary"):
     with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
-    # 散布図（軸ラベルに日本語タイトル）
+    # 散布図（50%サイズ）
     st.subheader("散布図")
     draw_scatter(df, label_a, label_b)
 
-    # 箱ひげ図と5数要約（項目名を日本語で）
+    # 箱ひげ図（上下）＋ 右横に5数要約
     st.subheader("箱ひげ図 と 四分位数")
-    b1, b2 = st.columns(2)
-    with b1:
+    left_col, right_col = st.columns([2, 1])  # 左にグラフ縦並び、右に表
+    with left_col:
         draw_boxplot(df["value_a"], label_a)
+        draw_boxplot(df["value_b"], label_b)
+    with right_col:
         a_summary = five_number_summary(df["value_a"])
         st.markdown(f"**{label_a} の5数要約**")
         st.table(pd.DataFrame(a_summary, index=["値"]))
-    with b2:
-        draw_boxplot(df["value_b"], label_b)
         b_summary = five_number_summary(df["value_b"])
         st.markdown(f"**{label_b} の5数要約**")
         st.table(pd.DataFrame(b_summary, index=["値"]))
