@@ -18,7 +18,7 @@ st.write(
     "表の「偏差値」列は使わず、**実数の値**（人数・金額・割合など）を自動抽出します。"
 )
 
-# ---- 47都道府県リスト ---------------------------------------------------------
+# ---- 47都道府県 --------------------------------------------------------------
 PREFS = [
     "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県",
     "埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県",
@@ -28,13 +28,12 @@ PREFS = [
 ]
 PREF_SET = set(PREFS)
 
-# ---- 共通ユーティリティ -------------------------------------------------------
+# ---- ユーティリティ ----------------------------------------------------------
 def to_number(s: str) -> float:
     """文字列から数値（小数含む）を抜き出して float 化。単位や%は無視。失敗時はNaN。"""
     if pd.isna(s):
         return np.nan
-    s = str(s)
-    s = s.replace(",", "").replace("　", " ").replace("％", "%")
+    s = str(s).replace(",", "").replace("　", " ").replace("％", "%")
     m = re.search(r"-?\d+(?:\.\d+)?", s)
     if not m:
         return np.nan
@@ -44,7 +43,7 @@ def to_number(s: str) -> float:
         return np.nan
 
 def five_number_summary(series: pd.Series):
-    """最小値, 第1四分位(Q1), 中央値(Q2), 第3四分位(Q3), 最大値 を辞書で返す"""
+    """最小, Q1, 中央(Q2), Q3, 最大 を辞書で返す"""
     s = pd.to_numeric(series, errors="coerce").dropna()
     if s.empty:
         return dict(最小値=np.nan, 第1四分位=np.nan, 中央値=np.nan, 第3四分位=np.nan, 最大値=np.nan)
@@ -71,7 +70,7 @@ def draw_boxplot(series: pd.Series, label: str):
     st.pyplot(fig)
 
 def flatten_columns(cols) -> list:
-    """pandasのMultiIndex列や 'Unnamed' を含む列名を1段の文字列リストにフラット化"""
+    """MultiIndex列や 'Unnamed' を含む列名を1段の文字列リストにフラット化"""
     if isinstance(cols, pd.MultiIndex):
         flat = []
         for tup in cols:
@@ -82,9 +81,9 @@ def flatten_columns(cols) -> list:
         return flat
     return [str(c).strip() for c in cols]
 
-# ---- とどランURL → (pref, value) DataFrame ------------------------------------
+# ---- とどランURL → (pref, value) DataFrame -----------------------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 3) -> pd.DataFrame:
+def load_todoran_table(url: str, version: int = 4) -> pd.DataFrame:
     """とどラン記事URLから、『都道府県』と『偏差値でない実数値の列』を自動抽出して返す。"""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
@@ -92,51 +91,51 @@ def load_todoran_table(url: str, version: int = 3) -> pd.DataFrame:
     html = r.text
 
     # 候補テーブルから「都道府県」列＋「偏差値でない数値列」を選ぶ
-    def pick_value_column(df: pd.DataFrame):
-        # 列名をフラット化＆重複除去
+    def pick_value_dataframe(df: pd.DataFrame):
         df = df.copy()
         df.columns = flatten_columns(df.columns)
-        df = df.loc[:, ~df.columns.duplicated()]
+        df = df.loc[:, ~df.columns.duplicated()]  # 同名列を除外
 
         cols = list(df.columns)
-        # 都道府県っぽい列名
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名", "道府県", "府県"))]
         if not pref_cols:
-            return None  # このDFは不採用
+            return None
 
-        # 「偏差値」を含まない & 県名・順位でない列
         value_candidates = [c for c in cols if ("偏差値" not in c) and (c not in ("順位", "都道府県", "道府県", "県名", "府県"))]
         if not value_candidates:
             return None
 
-        # スコアリング：数値化できる件数が多い列を優先
         best_score = -1
         best_df = None
-
         for pref_col in pref_cols:
-            work = df[[pref_col] + value_candidates].copy()
-            work[pref_col] = work[pref_col].astype(str).str.strip()
-            work = work[work[pref_col].isin(PREF_SET)]  # 47都道府県のみ
+            use_cols = [pref_col] + value_candidates
+            work = df[use_cols].copy()
+
+            # Series.str は使わず安全にトリム
+            work[pref_col] = work[pref_col].map(lambda x: str(x).strip())
+
+            # 47都道府県でフィルタ
+            work = work[work[pref_col].isin(PREF_SET)]
             if work.empty:
                 continue
 
             for vc in value_candidates:
                 nums = pd.to_numeric(work[vc].apply(to_number), errors="coerce")
-                score = nums.notna().sum()
+                score = int(nums.notna().sum())
                 if score > best_score:
                     w2 = pd.DataFrame({"pref": work[pref_col], "value": nums})
                     w2 = w2.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
                     best_score = score
                     best_df = w2
 
-        # 「十分に数値が取れている」ものだけ採用（47都道府県のうち30以上など）
+        # 「十分に数値が取れている」ものだけ採用（目安：30件以上）
         if best_df is not None and best_score >= 30 and not best_df.empty:
             best_df["pref"] = pd.Categorical(best_df["pref"], categories=PREFS, ordered=True)
             best_df = best_df.sort_values("pref").reset_index(drop=True)
             return best_df
         return None
 
-    # 1) pandas.read_html で表を抽出（複数ありうる）
+    # 1) pandas.read_html で表抽出（複数ある想定）
     tables = []
     try:
         tables = pd.read_html(html, flavor="lxml")
@@ -147,7 +146,7 @@ def load_todoran_table(url: str, version: int = 3) -> pd.DataFrame:
             tables = []
 
     for raw in tables:
-        got = pick_value_column(raw)
+        got = pick_value_dataframe(raw)
         if got is not None:
             return got
 
@@ -179,7 +178,7 @@ def load_todoran_table(url: str, version: int = 3) -> pd.DataFrame:
     # 3) それでも無理なら空
     return pd.DataFrame(columns=["pref", "value"])
 
-# ---- UI -----------------------------------------------------------------------
+# ---- UI ----------------------------------------------------------------------
 c1, c2 = st.columns(2)
 with c1:
     url_a = st.text_input("データAのURL（とどラン記事）", placeholder="https://todo-ran.com/t/kiji/XXXXX")
