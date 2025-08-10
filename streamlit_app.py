@@ -1,9 +1,8 @@
 # streamlit_app.py
 # とどランのランキング記事URLを2つ貼り付けて、
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
-# 表タイトル（<caption>/<h1> 等）をラベルに反映し、
-# 相関係数・決定係数・散布図（回帰直線つき）・箱ひげ図を表示。
-# 散布図は幅640px（前より2倍）、箱ひげ図は左右に横並び。
+# 相関係数・決定係数、散布図（外れ値あり／外れ値除外を横並び・回帰直線つき）、
+# 箱ひげ図（左右横並び）を表示。
 # Matplotlibは japanize-matplotlib で日本語化（無い環境はフォールバック）。
 
 import io
@@ -22,7 +21,6 @@ try:
     import japanize_matplotlib  # noqa: F401
     plt.rcParams["axes.unicode_minus"] = False
 except Exception:
-    # フォールバック：手元にある日本語フォントを自動検出
     def _set_jp_font_fallback():
         candidates = [
             "Yu Gothic", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP",
@@ -41,21 +39,22 @@ except Exception:
 
 st.set_page_config(page_title="都道府県データ 相関ツール（URL版）", layout="wide")
 st.title("都道府県データ 相関ツール（URL版）")
+
 st.write(
     "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
     "表の「偏差値」「順位」は使わず、**総数（件数・人数・金額などの実数値）**を自動抽出し、"
     "ページ内の **表タイトル** をグラフのラベルに反映します。"
 )
 
-# -------------------- 画像表示サイズ --------------------
-# Matplotlib 既定換算: 6.4inch * 100dpi = 640px
+# -------------------- 表示サイズ --------------------
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
-EXPORT_DPI = 200                 # PNG保存時のDPI（高精細）
-SCATTER_WIDTH_PX = 640           # 散布図は前の2倍（640px）
-BOX_WIDTH_PX = 320               # 箱ひげ図は左右に横並び用（各320px）
+EXPORT_DPI = 200
+# 散布図は横並び用に幅480pxずつ（2枚で約960px）
+SCATTER_WIDTH_PX = 480
+# 箱ひげ図は左右横並びで各320px
+BOX_WIDTH_PX = 320
 
 def show_fig(fig, width_px: int):
-    """figをPNGにして、指定px幅で確実に表示。"""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     buf.seek(0)
@@ -85,7 +84,6 @@ EXCLUDE_WORDS = ["順位","偏差値"]
 
 # -------------------- ユーティリティ --------------------
 def to_number(x) -> float:
-    """文字列から数値（小数含む）を抜き出して float 化。配列/Seriesが来ても安全。"""
     if not is_scalar(x):
         try:
             x = x.item()
@@ -100,38 +98,30 @@ def to_number(x) -> float:
     except Exception:
         return np.nan
 
-def draw_scatter_with_reg(df: pd.DataFrame, la: str, lb: str):
-    """散布図＋回帰直線（日本語ラベル）。"""
-    x = pd.to_numeric(df["value_a"], errors="coerce")
-    y = pd.to_numeric(df["value_b"], errors="coerce")
-    mask = x.notna() & y.notna()
-    x = x[mask].to_numpy()
-    y = y[mask].to_numpy()
+def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
+    """IQR法で外れ値でない部分のブール配列を返す"""
+    if arr.size == 0:
+        return np.array([], dtype=bool)
+    q1 = np.nanpercentile(arr, 25)
+    q3 = np.nanpercentile(arr, 75)
+    iqr = q3 - q1
+    lo = q1 - k * iqr
+    hi = q3 + k * iqr
+    return (arr >= lo) & (arr <= hi)
 
+def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int):
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y)
-
     if len(x) >= 2:
         slope, intercept = np.polyfit(x, y, 1)
         xs = np.linspace(x.min(), x.max(), 200)
         ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
         r = np.corrcoef(x, y)[0, 1]
         ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
-
-    ax.set_xlabel(la)  # 日本語
-    ax.set_ylabel(lb)  # 日本語
-    ax.set_title("散布図（回帰直線つき）")
-    show_fig(fig, SCATTER_WIDTH_PX)
-
-def draw_boxplot(series: pd.Series, label: str):
-    """箱ひげ図（日本語ラベル）。"""
-    fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-    ax.boxplot(pd.to_numeric(series, errors="coerce").dropna(), vert=True)
-    ax.set_title(f"箱ひげ図：{label}")
-    ax.set_ylabel("値")
-    ax.set_xticks([1])
-    ax.set_xticklabels([label])  # 日本語ラベル
-    show_fig(fig, BOX_WIDTH_PX)
+    ax.set_xlabel(la)
+    ax.set_ylabel(lb)
+    ax.set_title(title)
+    show_fig(fig, width_px)
 
 def flatten_columns(cols) -> list:
     if isinstance(cols, pd.MultiIndex):
@@ -174,13 +164,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 17):
-    """
-    とどラン記事URLから、
-    - df: columns = ['pref','value']（都道府県と総数系の実数値）
-    - label: グラフに使う日本語ラベル（caption > h1/title > 値列名）
-    を返す。
-    """
+def load_todoran_table(url: str, version: int = 18):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -281,7 +265,6 @@ def load_todoran_table(url: str, version: int = 17):
 
         return None, None
 
-    # read_html の各表を試し、caption をラベル候補に使う
     for idx, raw in enumerate(tables):
         got, val_col = pick_value_dataframe(raw)
         if got is not None:
@@ -311,7 +294,6 @@ def load_todoran_table(url: str, version: int = 17):
                 rows.append((pref, val))
 
     if rows:
-        # 👇 ここを修正：余分な ']' を削除
         work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
         work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
@@ -350,9 +332,7 @@ if st.button("相関を計算・表示する", type="primary"):
         how="inner",
     )
 
-    # 表示用：列名にラベルを使う（内部計算は value_a/value_b）
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
-
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
@@ -360,28 +340,57 @@ if st.button("相関を計算・表示する", type="primary"):
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。")
         st.stop()
 
-    # 相関（指定の表記で出力）
-    x = pd.to_numeric(df["value_a"], errors="coerce")
-    y = pd.to_numeric(df["value_b"], errors="coerce")
-    mask = x.notna() & y.notna()
-    r = float(x[mask].corr(y[mask]))
-    r2 = r ** 2
+    # 相関（全データ＆外れ値除外データ）
+    x0 = pd.to_numeric(df["value_a"], errors="coerce")
+    y0 = pd.to_numeric(df["value_b"], errors="coerce")
+    mask0 = x0.notna() & y0.notna()
+    x_all = x0[mask0].to_numpy()
+    y_all = y0[mask0].to_numpy()
+
+    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)
+    x_in = x_all[mask_inlier]
+    y_in = y_all[mask_inlier]
+
+    def corr_pair(x, y):
+        if len(x) >= 2:
+            r = float(np.corrcoef(x, y)[0, 1])
+            return r, r**2
+        return np.nan, np.nan
+
+    r_all, r2_all = corr_pair(x_all, y_all)
+    r_in, r2_in = corr_pair(x_in, y_in)
 
     st.subheader("相関の結果")
-    st.markdown(f"**相関係数 r = {r:.4f}**")
-    st.markdown(f"**決定係数 r2 = {r2:.4f}**")
+    st.markdown(f"**（全データ）相関係数 r = {r_all:.4f}**")
+    st.markdown(f"**（全データ）決定係数 r2 = {r2_all:.4f}**")
+    st.markdown(f"**（外れ値除外）相関係数 r = {r_in:.4f}**")
+    st.markdown(f"**（外れ値除外）決定係数 r2 = {r2_in:.4f}**")
 
-    # 散布図（回帰直線つき：幅640px）
-    st.subheader("散布図")
-    draw_scatter_with_reg(df, label_a, label_b)
+    # 散布図：外れ値あり／除外 を横並び表示（どちらも回帰直線つき）
+    st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
+    c_left, c_right = st.columns(2)
+    with c_left:
+        draw_scatter_reg_from_arrays(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
+    with c_right:
+        draw_scatter_reg_from_arrays(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
 
-    # 箱ひげ図（左右に横並び：各320px）
+    # 箱ひげ図（左右に横並び）
     st.subheader("箱ひげ図")
     col_left, col_right = st.columns(2)
     with col_left:
-        draw_boxplot(df["value_a"], label_a)
+        fig1, ax1 = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
+        ax1.boxplot(pd.to_numeric(df["value_a"], errors="coerce").dropna(), vert=True)
+        ax1.set_title(f"箱ひげ図：{label_a}")
+        ax1.set_ylabel("値")
+        ax1.set_xticks([1]); ax1.set_xticklabels([label_a])
+        show_fig(fig1, BOX_WIDTH_PX)
     with col_right:
-        draw_boxplot(df["value_b"], label_b)
+        fig2, ax2 = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
+        ax2.boxplot(pd.to_numeric(df["value_b"], errors="coerce").dropna(), vert=True)
+        ax2.set_title(f"箱ひげ図：{label_b}")
+        ax2.set_ylabel("値")
+        ax2.set_xticks([1]); ax2.set_xticklabels([label_b])
+        show_fig(fig2, BOX_WIDTH_PX)
 
     # CSVダウンロード（内部名のまま保存：分析向け）
     csv = df.to_csv(index=False).encode("utf-8-sig")
