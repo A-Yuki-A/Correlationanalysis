@@ -108,22 +108,36 @@ def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
     hi = q3 + k * iqr
     return (arr >= lo) & (arr <= hi)
 
-def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int, show_n: bool = True):
-    """散布図＋回帰直線。日本語ラベル。下に n= を表示。"""
+def draw_scatter_reg_from_arrays(
+    x: np.ndarray, y: np.ndarray, la: str, lb: str,
+    title: str, width_px: int, show_n: bool = True
+):
+    """散布図＋回帰直線。軸ラベル/凡例は日本語。下に n= を表示。"""
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-    ax.scatter(x, y)
+
+    # データ点（凡例ラベルを日本語に）
+    ax.scatter(x, y, label="データ点")
+
+    # 単回帰（最小二乗）
     if len(x) >= 2:
         slope, intercept = np.polyfit(x, y, 1)
         xs = np.linspace(x.min(), x.max(), 200)
-        ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
+        ax.plot(xs, slope * xs + intercept, label="回帰直線")
         r = np.corrcoef(x, y)[0, 1]
-        ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
-    ax.set_xlabel(la)  # 日本語（ページの表タイトル由来）
-    ax.set_ylabel(lb)  # 日本語
-    ax.set_title(title)
+        # 凡例タイトルを日本語で（r2 表記）
+        legend_title = f"相関係数 r = {r:.3f}／決定係数 r2 = {r**2:.3f}"
+        ax.legend(loc="best", frameon=False, title=legend_title)
+    else:
+        ax.legend(loc="best", frameon=False)
+
+    # 軸ラベル（日本語）
+    ax.set_xlabel(la if str(la).strip() else "横軸")
+    ax.set_ylabel(lb if str(lb).strip() else "縦軸")
+    ax.set_title(title if str(title).strip() else "散布図")
+
     show_fig(fig, width_px)
     if show_n:
-        st.caption(f"n = {len(x)}")  # 散布図の直下に母数
+        st.caption(f"n = {len(x)}")
 
 def flatten_columns(cols) -> list:
     if isinstance(cols, pd.MultiIndex):
@@ -168,7 +182,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 21):
+def load_todoran_table(url: str, version: int = 22):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
