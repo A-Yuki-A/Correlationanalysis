@@ -1,7 +1,9 @@
 # streamlit_app.py
-# とどランURL×2 → 都道府県の総数データを抽出し、
-# 相関係数・決定係数、散布図（外れ値あり／外れ値除外：横並び・回帰直線つき・nを下に表示）、
-# 箱ひげ図（左右横並び）を表示。日本語は japanize-matplotlib で対応。
+# とどランのランキング記事URLを2つ貼り付けて、
+# 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
+# 相関係数・決定係数、散布図（外れ値あり／外れ値除外：横並び・回帰直線つき・n表示）を表示。
+# ページ末尾に「外れ値の定義（IQR法）」を記述。
+# Matplotlib は japanize-matplotlib で日本語化（無い環境はフォールバック）。
 
 import io
 import re
@@ -48,7 +50,6 @@ st.write(
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
 EXPORT_DPI = 200
 SCATTER_WIDTH_PX = 480   # 散布図：横並び2枚でも見やすい幅
-BOX_WIDTH_PX = 320       # 箱ひげ図：左右並び
 
 def show_fig(fig, width_px: int):
     buf = io.BytesIO()
@@ -115,7 +116,7 @@ def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str,
         ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
         r = np.corrcoef(x, y)[0, 1]
         ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
-    ax.set_xlabel(la)  # 日本語（ページの表タイトルから取得）
+    ax.set_xlabel(la)  # 日本語（表タイトルから取得）
     ax.set_ylabel(lb)  # 日本語
     ax.set_title(title)
     show_fig(fig, width_px)
@@ -163,7 +164,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 19):
+def load_todoran_table(url: str, version: int = 20):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -347,7 +348,7 @@ if st.button("相関を計算・表示する", type="primary"):
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
 
-    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)
+    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)  # xまたはyが外れ値なら除外
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
 
@@ -374,23 +375,14 @@ if st.button("相関を計算・表示する", type="primary"):
     with c_right:
         draw_scatter_reg_from_arrays(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX, show_n=True)
 
-    # 箱ひげ図（左右に横並び）
-    st.subheader("箱ひげ図")
-    col_left, col_right = st.columns(2)
-    with col_left:
-        fig1, ax1 = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-        ax1.boxplot(pd.to_numeric(df["value_a"], errors="coerce").dropna(), vert=True)
-        ax1.set_title(f"箱ひげ図：{label_a}")
-        ax1.set_ylabel("値")
-        ax1.set_xticks([1]); ax1.set_xticklabels([label_a])
-        show_fig(fig1, BOX_WIDTH_PX)
-    with col_right:
-        fig2, ax2 = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
-        ax2.boxplot(pd.to_numeric(df["value_b"], errors="coerce").dropna(), vert=True)
-        ax2.set_title(f"箱ひげ図：{label_b}")
-        ax2.set_ylabel("値")
-        ax2.set_xticks([1]); ax2.set_xticklabels([label_b])
-        show_fig(fig2, BOX_WIDTH_PX)
+    # --- 一番下に外れ値の定義を記載 ---
+    st.markdown("---")
+    st.markdown(
+        "#### 外れ値の定義\n"
+        "本ツールでは **IQR法** を用いて外れ値を判定しています。四分位範囲 IQR = Q3 − Q1 とし、\n"
+        "**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。\n"
+        "散布図では、**x または y のどちらかが外れ値**に該当する都道府県を除外して「外れ値除外」図を作成しています。"
+    )
 
     # CSVダウンロード
     csv = df.to_csv(index=False).encode("utf-8-sig")
