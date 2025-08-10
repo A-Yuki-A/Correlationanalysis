@@ -1,9 +1,9 @@
 # streamlit_app.py
 # とどランのランキング記事URLを2つ貼り付けて、
-# 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
-# 相関係数・決定係数、散布図（外れ値あり／外れ値除外：横並び・回帰直線つき・n表示）を表示。
-# ページ末尾に「外れ値の定義（IQR法）」を記述。
-# Matplotlib は japanize-matplotlib で日本語化（無い環境はフォールバック）。
+# 「都道府県 × 実数（順位・偏差値は除外）」を自動抽出。
+# 相関係数・決定係数、散布図（外れ値あり／外れ値除外：横並び・回帰直線つき・n表示）を出す。
+# ページ末尾に「外れ値の定義（IQR法）」を表示。
+# Matplotlibは japanize-matplotlib で日本語化（未導入環境では日本語フォントに自動フォールバック）。
 
 import io
 import re
@@ -46,12 +46,13 @@ st.write(
     "ページ内の **表タイトル** をグラフのラベルに反映します（日本語対応）。"
 )
 
-# -------------------- 表示サイズ --------------------
-BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
-EXPORT_DPI = 200
-SCATTER_WIDTH_PX = 480   # 散布図：横並び2枚でも見やすい幅
+# -------------------- 画像表示サイズ --------------------
+BASE_W_INCH, BASE_H_INCH = 6.4, 4.8  # 論理サイズ
+EXPORT_DPI = 200                     # PNG保存DPI
+SCATTER_WIDTH_PX = 480               # 散布図（横並び2枚でも収まる幅）
 
 def show_fig(fig, width_px: int):
+    """figをPNGにして、指定px幅で表示。"""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     buf.seek(0)
@@ -81,6 +82,7 @@ EXCLUDE_WORDS = ["順位","偏差値"]
 
 # -------------------- ユーティリティ --------------------
 def to_number(x) -> float:
+    """文字列から数値を抜き出して float 化（Series/ndarrayが来ても安全）。"""
     if not is_scalar(x):
         try:
             x = x.item()
@@ -96,7 +98,7 @@ def to_number(x) -> float:
         return np.nan
 
 def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
-    """IQR法で外れ値でない部分のブール配列を返す"""
+    """IQR法で外れ値でない部分のブール配列を返す。"""
     if arr.size == 0:
         return np.array([], dtype=bool)
     q1 = np.nanpercentile(arr, 25)
@@ -107,7 +109,7 @@ def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
     return (arr >= lo) & (arr <= hi)
 
 def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int, show_n: bool = True):
-    """散布図＋回帰直線。日本語ラベル。下に n= を表示"""
+    """散布図＋回帰直線。日本語ラベル。下に n= を表示。"""
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y)
     if len(x) >= 2:
@@ -116,12 +118,12 @@ def draw_scatter_reg_from_arrays(x: np.ndarray, y: np.ndarray, la: str, lb: str,
         ax.plot(xs, slope * xs + intercept, label=f"回帰直線: y = {slope:.3g}x + {intercept:.3g}")
         r = np.corrcoef(x, y)[0, 1]
         ax.legend(loc="best", frameon=False, title=f"r = {r:.3f}, R² = {r**2:.3f}")
-    ax.set_xlabel(la)  # 日本語（表タイトルから取得）
+    ax.set_xlabel(la)  # 日本語（ページの表タイトル由来）
     ax.set_ylabel(lb)  # 日本語
     ax.set_title(title)
     show_fig(fig, width_px)
     if show_n:
-        st.caption(f"n = {len(x)}")  # ← 散布図の直下に母数
+        st.caption(f"n = {len(x)}")  # 散布図の直下に母数
 
 def flatten_columns(cols) -> list:
     if isinstance(cols, pd.MultiIndex):
@@ -147,6 +149,7 @@ def make_unique(seq: list) -> list:
     return out
 
 def is_rank_like(nums: pd.Series) -> bool:
+    """1〜60の整数が大半・ユニーク多数なら『順位らしい』と判定して除外。"""
     s = pd.to_numeric(nums, errors="coerce").dropna()
     if s.empty:
         return False
@@ -157,6 +160,7 @@ def is_rank_like(nums: pd.Series) -> bool:
     return (share_int >= 0.8) and (in_range >= 0.9) and unique_close
 
 def compose_label(caption: str | None, val_col: str | None, page_title: str | None) -> str:
+    """caption → h1/title → 値列名 → 'データ' の優先で日本語ラベルを決定。"""
     for s in (caption, page_title, val_col, "データ"):
         if s and str(s).strip():
             return str(s).strip()
@@ -164,7 +168,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 20):
+def load_todoran_table(url: str, version: int = 21):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -277,7 +281,7 @@ def load_todoran_table(url: str, version: int = 20):
             label = compose_label(caption_text, val_col, page_h1 or page_title)
             return got, label
 
-    # フォールバック（簡易抽出）
+    # フォールバック（簡易抽出：テキスト走査）
     lines = []
     for tag in soup.find_all(text=True):
         t = str(tag).strip()
@@ -333,6 +337,7 @@ if st.button("相関を計算・表示する", type="primary"):
         how="inner",
     )
 
+    # 表示用：列名にラベルを使う（内部計算は value_a/value_b）
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -348,7 +353,8 @@ if st.button("相関を計算・表示する", type="primary"):
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
 
-    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)  # xまたはyが外れ値なら除外
+    # x または y のどちらかが外れ値なら除外
+    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
 
