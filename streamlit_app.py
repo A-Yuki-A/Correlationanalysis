@@ -2,6 +2,7 @@
 # とどランURL×2 → 都道府県の「総数」データを抽出し、
 # 外れ値あり／外れ値除外の散布図（横並び・回帰直線つき）を表示。
 # 各散布図の直下に n・相関係数r・決定係数r2 を表示。
+# 外れ値に該当する都道府県名（X外れ・Y外れ・除外対象）も表示＆CSV保存。
 # 最下部に外れ値の定義（IQR法）を記載。
 
 import io
@@ -16,8 +17,8 @@ from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
 
-# === フォント設定：同梱フォント最優先（なければシステム → japanize相当） ===
-fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # 置いたフォント
+# === フォント設定：同梱フォント最優先（なければシステム） ===
+fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # 置いたフォント（同梱推奨）
 if fp.exists():
     fm.fontManager.addfont(str(fp))
     plt.rcParams["font.family"] = "Source Han Code JP"  # 家族名
@@ -112,8 +113,7 @@ def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str
             xs = np.linspace(x.min(), x.max(), 200)
             ax.plot(xs, slope * xs + intercept, label="回帰直線")
         if varx > 0 and vary > 0:
-            r = float(np.corrcoef(x, y)[0, 1])
-            r2 = r**2
+            r = float(np.corrcoef(x, y)[0, 1]); r2 = r**2
 
     if r is not None and np.isfinite(r):
         ax.legend(loc="best", frameon=False, title=f"相関係数 r = {r:.3f}／決定係数 r2 = {r2:.3f}")
@@ -169,7 +169,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 25):
+def load_todoran_table(url: str, version: int = 26):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -312,6 +312,7 @@ if st.button("相関を計算・表示する", type="primary"):
         on="pref", how="inner",
     )
 
+    # 表示用
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -319,15 +320,49 @@ if st.button("相関を計算・表示する", type="primary"):
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。"); st.stop()
 
-    # 数値配列
+    # 数値配列（NaN除去）
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
-    x_all = x0[mask0].to_numpy(); y_all = y0[mask0].to_numpy()
+    x_all = x0[mask0].to_numpy()
+    y_all = y0[mask0].to_numpy()
+    pref_all = df.loc[mask0, "pref"].astype(str).to_numpy()
 
-    # 外れ値除外（x または y が外れ値なら除外）
-    mask_inlier = iqr_mask(x_all, 1.5) & iqr_mask(y_all, 1.5)
-    x_in = x_all[mask_inlier]; y_in = y_all[mask_inlier]
+    # 外れ値除外（x または y のどちらかが外れ値なら除外）
+    mask_x_in = iqr_mask(x_all, 1.5)
+    mask_y_in = iqr_mask(y_all, 1.5)
+    mask_inlier = mask_x_in & mask_y_in
+    x_in = x_all[mask_inlier]
+    y_in = y_all[mask_inlier]
+
+    # --- 外れ値（県名）を表示 ---
+    st.subheader("外れ値（都道府県名）")
+    c1, c2, c3 = st.columns(3)
+    outs_x = pref_all[~mask_x_in]
+    outs_y = pref_all[~mask_y_in]
+    outs_any = pref_all[~mask_inlier]
+    with c1:
+        st.markdown("**X軸で外れ値**")
+        st.write("、".join(map(str, outs_x)) if len(outs_x) else "なし")
+    with c2:
+        st.markdown("**Y軸で外れ値**")
+        st.write("、".join(map(str, outs_y)) if len(outs_y) else "なし")
+    with c3:
+        st.markdown("**除外対象（XまたはY）**")
+        st.write("、".join(map(str, outs_any)) if len(outs_any) else "なし")
+
+    out_df = pd.DataFrame({
+        "都道府県": pref_all,
+        "X外れ値": ~mask_x_in,
+        "Y外れ値": ~mask_y_in,
+        "除外対象": ~mask_inlier
+    })
+    st.download_button(
+        "外れ値リストをCSVで保存",
+        out_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="outliers.csv",
+        mime="text/csv"
+    )
 
     # 散布図：外れ値あり／除外（横並び）→ 各図の直下に n, r, r2
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
