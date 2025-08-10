@@ -2,9 +2,9 @@
 # とどランのランキング記事URLを2つ貼り付けて、
 # 「都道府県 × 実数値（偏差値や順位は除外）」を自動抽出。
 # 表タイトル（<caption>/<h1> 等）をラベルに反映し、
-# 相関係数・決定係数・散布図・箱ひげ図・5数要約を表示する。
-# さらに、散布図・箱ひげ図を“実寸で50%”に確実に縮小して表示（st.imageでwidth指定）、
-# 箱ひげ図は上下に、右側に要約表（四分位数・中央値など）を配置。
+# 相関係数・決定係数・散布図・箱ひげ図を表示する。
+# 図は st.image(width=...) で横幅を強制指定して“実寸50%”で表示。
+# 5数要約の表は表示しません（完全削除）。
 
 import io
 import re
@@ -26,11 +26,9 @@ st.write(
 )
 
 # -------------------- 図サイズ制御（50%で確実に表示） --------------------
-# Matplotlibの“論理サイズ”は既定 6.4×4.8 inch, DPI=100 → 640×480px 相当。
-# ここではPNGにして st.image(width=...) でピクセル幅を強制指定する。
-BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
-EXPORT_DPI = 200                    # 保存時のDPI（高めにしてクッキリ）
-DISPLAY_SCALE = 0.50                # 画面表示を50%に
+BASE_W_INCH, BASE_H_INCH = 6.4, 4.8   # matplotlib 既定サイズ
+EXPORT_DPI = 200                      # クッキリ表示用
+DISPLAY_SCALE = 0.50                  # 画面表示スケール（50%）
 DISPLAY_WIDTH_PX = int(BASE_W_INCH * EXPORT_DPI * DISPLAY_SCALE)
 
 def show_fig(fig):
@@ -97,18 +95,6 @@ def to_number(x) -> float:
     except Exception:
         return np.nan
 
-def five_number_summary(series: pd.Series):
-    s = pd.to_numeric(series, errors="coerce").dropna()
-    if s.empty:
-        return dict(最小値=np.nan, 第1四分位=np.nan, 中央値=np.nan, 第3四分位=np.nan, 最大値=np.nan)
-    return dict(
-        最小値=float(s.min()),
-        第1四分位=float(s.quantile(0.25)),
-        中央値=float(s.median()),
-        第3四分位=float(s.quantile(0.75)),
-        最大値=float(s.max()),
-    )
-
 def draw_scatter(df: pd.DataFrame, la: str, lb: str):
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(df["value_a"], df["value_b"])
@@ -167,7 +153,7 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 11):
+def load_todoran_table(url: str, version: int = 12):
     """
     とどラン記事URLから、
     - df: columns = ['pref','value']（都道府県と総数系の実数値）
@@ -304,7 +290,7 @@ def load_todoran_table(url: str, version: int = 11):
 
     if rows:
         work = pd.DataFrame(rows, columns=["pref", "value"]).drop_duplicates("pref")
-        work["pref"] = pd.Categorical(work["pref"], categories=PREFS, ordered=True)
+        work["pref"] = pd.Categorical(work["pref"], categories[PREFS,], ordered=True)
         work = work.sort_values("pref").reset_index(drop=True)
         label = compose_label(None, None, page_h1 or page_title)
         return work, label
@@ -362,23 +348,14 @@ if st.button("相関を計算・表示する", type="primary"):
     with m2:
         st.metric("決定係数 R²", f"{r2:.4f}")
 
-    # 散布図（50%サイズで確実に縮小表示）
+    # 散布図（50%サイズ）
     st.subheader("散布図")
     draw_scatter(df, label_a, label_b)
 
-    # 箱ひげ図（上下）＋ 右に5数要約（各データ）
-    st.subheader("箱ひげ図 と 四分位数")
-    left_col, right_col = st.columns([2, 1])  # 左：グラフ縦並び / 右：表
-    with left_col:
-        draw_boxplot(df["value_a"], label_a)
-        draw_boxplot(df["value_b"], label_b)
-    with right_col:
-        a_summary = five_number_summary(df["value_a"])
-        st.markdown(f"**{label_a} の5数要約**")
-        st.table(pd.DataFrame(a_summary, index=["値"]))
-        b_summary = five_number_summary(df["value_b"])
-        st.markdown(f"**{label_b} の5数要約**")
-        st.table(pd.DataFrame(b_summary, index=["値"]))
+    # 箱ひげ図（上下に2枚。5数要約表は表示しない）
+    st.subheader("箱ひげ図")
+    draw_boxplot(df["value_a"], label_a)
+    draw_boxplot(df["value_b"], label_b)
 
     # CSVダウンロード（内部名のまま保存：分析向け）
     csv = df.to_csv(index=False).encode("utf-8-sig")
