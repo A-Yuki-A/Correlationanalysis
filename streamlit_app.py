@@ -321,4 +321,4 @@ if st.button("相関を計算・表示する", type="primary"):
     with col_l:
         draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
     with col_r:
-        draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
+        draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER
