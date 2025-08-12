@@ -409,12 +409,68 @@ if st.button("AI分析", disabled=ai_disabled):
     outs_x = c["outs_x"]; outs_y = c["outs_y"]
     label_a = c["label_a"]; label_b = c["label_b"]
 
+    # 係数などを計算
     r_all = safe_pearson(x_all, y_all)
     r_in  = safe_pearson(x_in,  y_in)
     r2_all = (r_all**2) if np.isfinite(r_all) else np.nan
     r2_in  = (r_in**2)  if np.isfinite(r_in)  else np.nan
     rho_all = safe_spearman(x_all, y_all)
 
+    # ---- ここから：AIの総合コメント（最上部に表示）----
+    def has_any(s, words):
+        t = str(s or "")
+        return any(w in t for w in words)
+
+    COMMON_DENOMS = ["人口","人","世帯","面積","県内総生産","GDP","生徒数","児童数","病床数","車両数"]
+    CAUSE_LIKE = ["支出","投資","施策","設備","普及率","導入率","供給","提供","価格","気温","降水","日照","所得","収入","賃金","教育","医師数","教員数"]
+    EFFECT_LIKE = ["件数","死亡率","事故","販売","売上","利用","満足度","待機児童","志願者","合格率","歩留","欠席","感染","犯罪","通報","受診","受給","離職"]
+
+    # 相関の強さ（外れ値除外を優先して判定）
+    corr_strength = strength_label(r_in if np.isfinite(r_in) else r_all)
+    corr_exists = (corr_strength not in ("ほとんどない", "判定不可"))
+
+    # 疑似相関（規模効果/共通分母/外れ値駆動）
+    la, lb = str(label_a), str(label_b)
+    both_rate = (has_any(la, RATE_WORDS) and has_any(lb, RATE_WORDS))
+    both_total = (not has_any(la, RATE_WORDS) and not has_any(lb, RATE_WORDS))
+    share_denom = any((d in la) and (d in lb) for d in COMMON_DENOMS)
+
+    pseudo_flags = []
+    if both_total:
+        pseudo_flags.append("両方が“総数系”で、人口規模の大きさに引きずられて相関が出やすい（規模効果）")
+    if both_rate or share_denom:
+        pseudo_flags.append("両方が同じ分母（例：人口）に依存している可能性（共通分母）")
+    if np.isfinite(r_all) and np.isfinite(r_in) and (abs(r_all) - abs(r_in) >= 0.15):
+        pseudo_flags.append("外れ値が相関を大きく見せていた可能性")
+
+    # 因果の向きの“仮説”
+    cause_hint = None
+    if has_any(la, CAUSE_LIKE) and has_any(lb, EFFECT_LIKE):
+        cause_hint = f"『{label_a} → {label_b}』の因果がありそう（仮説）"
+    elif has_any(lb, CAUSE_LIKE) and has_any(la, EFFECT_LIKE):
+        cause_hint = f"『{label_b} → {label_a}』の因果がありそう（仮説）"
+
+    # 総合判定メッセージ
+    if not corr_exists:
+        relation = "相関はほぼ見られません。"
+        reason = "相関係数が小さく、順位相関も弱めです。"
+    else:
+        if pseudo_flags:
+            relation = "相関は確認できますが、疑似相関の可能性が高いです。"
+            reason = "・" + "\n・".join(pseudo_flags)
+        elif cause_hint:
+            relation = "相関があり、因果の可能性も示唆されます（仮説）。"
+            reason = cause_hint
+        else:
+            relation = "相関は確認できますが、因果かどうかはこのデータだけでは判断できません。"
+            reason = "追加のデータや検証が必要です。"
+
+    # ★最上部に強調表示（AIの総合コメント）
+    st.success(f"**AI総合コメント**：{relation}")
+    st.markdown("**理由（要約）**\n\n" + reason)
+    # ---- ここまで：AIの総合コメント ----
+
+    # 以下、数値の内訳
     st.subheader("AI分析")
     st.markdown(f"""
 - サンプル数: 全データ **n={len(x_all)}** ／ 外れ値除外 **n={len(x_in)}**
@@ -430,6 +486,7 @@ if st.button("AI分析", disabled=ai_disabled):
         "- 疑似相関は、人口や面積など**共通の要因**が両方に効いて「関係があるように見える」状態です。\n"
         "- 因果を確かめるには、時系列の比較や条件をそろえた検証など、**追加の分析**が必要です。"
     )
+
 
 # 外れ値の定義（IQR法）
 st.markdown(
