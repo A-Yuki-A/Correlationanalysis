@@ -2,8 +2,8 @@
 # とどランURL×2 → 都道府県データ抽出、相関分析（外れ値あり／なし散布図）
 # ・割合列も許可（オプション）
 # ・「偏差値」や「順位」列は除外
-# ・外れ値（都道府県名）は縦並び表示
-# ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮
+# ・外れ値は「X軸で外れ値」「Y軸で外れ値」のみ横並び2カラム表示
+# ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮／タイトル余白修正
 
 import io
 import re
@@ -33,6 +33,14 @@ else:
 plt.rcParams["axes.unicode_minus"] = False
 
 st.set_page_config(page_title="CorrGraph", layout="wide")
+
+# タイトルの上に余白を追加
+st.markdown("""
+<style>
+h1 { margin-top: 2rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("CorrGraph")
 st.write("とどランの **各ランキング記事のURL** を2つ貼り付けてください。")
 
@@ -58,7 +66,7 @@ html, body, [data-testid="stAppViewContainer"] {
   background: #f5f5f5 !important;
 }
 .block-container {
-  max-width: 980px;      /* 左右に余白を作る */
+  max-width: 980px;
   padding-top: 1.2rem;
   padding-bottom: 3rem;
 }
@@ -71,7 +79,7 @@ input, textarea, select, .stTextInput > div > div > input {
 }
 :focus-visible, input:focus, textarea:focus, select:focus,
 button:focus, [role="button"]:focus {
-  outline: 3px solid #000 !important; outline-offset: 2px !important; /* フォーカス可視化 */
+  outline: 3px solid #000 !important; outline-offset: 2px !important;
 }
 button[kind="primary"], .stButton>button {
   background: #222 !important; color: #fff !important; border: 1.5px solid #000 !important; box-shadow: none !important;
@@ -82,7 +90,7 @@ button[kind="primary"]:hover, .stButton>button:hover { filter: brightness(1.2); 
 }
 [data-testid="stDataFrame"] tbody tr:nth-child(even) { background: #fafafa !important; }
 .small-font, .caption, .stCaption, figcaption { font-size: 0.98rem !important; color: #222 !important; }
-a, a:visited { color: #000 !important; text-decoration: underline !important; } /* 色覚配慮 */
+a, a:visited { color: #000 !important; text-decoration: underline !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,7 +109,7 @@ PREF_SET = set(PREFS)
 TOTAL_KEYWORDS = ["総数","合計","件数","人数","人口","世帯","戸数","台数","店舗数","病床数","施設数",
     "金額","額","費用","支出","収入","販売額","生産額","生産量","面積","延べ","延","数"]
 RATE_WORDS = ["率","割合","比率","％","パーセント","人当たり","一人当たり","人口当たり","千人当たり","10万人当たり","当たり","戸建て率"]
-EXCLUDE_WORDS = ["順位","偏差値"]  # ← 必ず除外
+EXCLUDE_WORDS = ["順位","偏差値"]
 
 # -------------------- ユーティリティ --------------------
 def show_fig(fig, width_px: int):
@@ -113,22 +121,16 @@ def show_fig(fig, width_px: int):
 
 def to_number(x) -> float:
     if not is_scalar(x):
-        try:
-            x = x.item()
-        except Exception:
-            return np.nan
+        try: x = x.item()
+        except Exception: return np.nan
     s = str(x).replace(",", "").replace("　", " ").replace("％", "%").strip()
     m = re.search(r"-?\d+(?:\.\d+)?", s)
-    if not m:
-        return np.nan
-    try:
-        return float(m.group(0))
-    except Exception:
-        return np.nan
+    if not m: return np.nan
+    try: return float(m.group(0))
+    except Exception: return np.nan
 
 def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
-    if arr.size == 0:
-        return np.array([], dtype=bool)
+    if arr.size == 0: return np.array([], dtype=bool)
     q1 = np.nanpercentile(arr, 25)
     q3 = np.nanpercentile(arr, 75)
     iqr = q3 - q1
@@ -142,7 +144,6 @@ def fmt(v: float) -> str:
 def draw_scatter_reg_with_metrics(x, y, la, lb, title, width_px):
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y, label="データ点", s=DEFAULT_MARKER_SIZE)
-
     r = r2 = None
     varx = float(np.nanstd(x)) if len(x) else 0.0
     vary = float(np.nanstd(y)) if len(y) else 0.0
@@ -153,27 +154,21 @@ def draw_scatter_reg_with_metrics(x, y, la, lb, title, width_px):
             ax.plot(xs, slope * xs + intercept, label="回帰直線", linewidth=DEFAULT_LINE_WIDTH)
         if varx > 0 and vary > 0:
             r = float(np.corrcoef(x, y)[0, 1]); r2 = r**2
-
     if r is not None and np.isfinite(r):
         ax.legend(loc="best", frameon=False, title=f"相関係数 r = {r:.3f}／決定係数 r2 = {r2:.3f}")
     else:
         ax.legend(loc="best", frameon=False)
-
     ax.set_xlabel(la if str(la).strip() else "横軸")
     ax.set_ylabel(lb if str(lb).strip() else "縦軸")
     ax.set_title(title if str(title).strip() else "散布図")
-
     show_fig(fig, width_px)
     st.caption(f"n = {len(x)}")
     st.caption(f"相関係数 r = {fmt(r)}")
     st.caption(f"決定係数 r2 = {fmt(r2)}")
 
 def flatten_columns(cols):
-    """列名を平坦化し、空白や改行を除去して正規化（例：'総 数'→'総数'）。"""
     def _normalize(c: str) -> str:
-        c = str(c).strip()
-        return re.sub(r"\s+", "", c)
-
+        return re.sub(r"\s+", "", str(c).strip())
     if isinstance(cols, pd.MultiIndex):
         flat = []
         for tup in cols:
@@ -197,8 +192,7 @@ def make_unique(seq):
 
 def is_rank_like(nums):
     s = pd.to_numeric(nums, errors="coerce").dropna()
-    if s.empty:
-        return False
+    if s.empty: return False
     ints = (np.abs(s - np.round(s)) < 1e-9)
     share_int = float(ints.mean())
     in_range = float(((s >= 1) & (s <= 60)).mean())
@@ -214,16 +208,13 @@ def compose_label(caption, val_col, page_title):
 # -------------------- URL読み込み --------------------
 @st.cache_data(show_spinner=False)
 def load_todoran_table(url: str, allow_rate: bool = True):
-    """allow_rate=True で率・割合列も候補に含める。偏差値/順位は除外のまま。"""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
     soup = BeautifulSoup(html, "lxml")
-
     page_h1 = soup.find("h1").get_text(strip=True) if soup.find("h1") else None
     page_title = soup.title.get_text(strip=True) if soup.title else None
-
     try:
         tables = pd.read_html(html, flavor="lxml")
     except Exception:
@@ -231,37 +222,22 @@ def load_todoran_table(url: str, allow_rate: bool = True):
             tables = pd.read_html(html, flavor="bs4")
         except Exception:
             tables = []
-
     bs_tables = soup.find_all("table")
-
     def pick_value_dataframe(df):
         df = df.copy()
         df.columns = make_unique(flatten_columns(df.columns))
         df = df.loc[:, ~df.columns.duplicated()]
-
         cols = list(df.columns)
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名","道府県","府県"))]
-        if not pref_cols:
-            return None, None
-
+        if not pref_cols: return None, None
         def bad_name(name: str) -> bool:
             return any(w in str(name) for w in EXCLUDE_WORDS)
-
-        # 「順位」「偏差値」などを除いた値候補（率を含むかは後で分岐）
-        raw_value_candidates = [
-            c for c in cols
-            if (c not in ("順位","都道府県","道府県","県名","府県")) and (not bad_name(c))
-        ]
-
-        # 総数キーワードにヒットする列（優先）
+        raw_value_candidates = [c for c in cols if (c not in ("順位","都道府県","道府県","県名","府県")) and (not bad_name(c))]
         total_name_candidates = [c for c in raw_value_candidates if any(k in c for k in TOTAL_KEYWORDS)]
-
-        # フォールバック候補：allow_rate で分岐
         if allow_rate:
-            fallback_candidates = raw_value_candidates[:]   # 率・割合も許可
+            fallback_candidates = raw_value_candidates[:]
         else:
             fallback_candidates = [c for c in raw_value_candidates if not any(rw in c for rw in RATE_WORDS)]
-
         def score_and_build(pref_col, candidate_cols):
             best_score, best_df, best_vc = -1, None, None
             pref_series = df[pref_col]
@@ -269,18 +245,14 @@ def load_todoran_table(url: str, allow_rate: bool = True):
                 pref_series = pref_series.iloc[:, 0]
             pref_series = pref_series.map(lambda x: str(x).strip())
             mask = pref_series.isin(PREF_SET).to_numpy()
-            if not mask.any():
-                return None, None
+            if not mask.any(): return None, None
             for vc in candidate_cols:
-                if vc not in df.columns:
-                    continue
+                if vc not in df.columns: continue
                 col = df[vc]
                 if isinstance(col, pd.DataFrame):
                     col = col.iloc[:, 0]
                 col_num = pd.to_numeric(col.map(to_number), errors="coerce").loc[mask]
-                # 順位っぽい列は除外
-                if is_rank_like(col_num):
-                    continue
+                if is_rank_like(col_num): continue
                 base = int(col_num.notna().sum())
                 bonus = 15 if any(k in vc for k in TOTAL_KEYWORDS) else 0
                 score = base + bonus
@@ -289,46 +261,31 @@ def load_todoran_table(url: str, allow_rate: bool = True):
                     tmp = tmp.dropna(subset=["value"]).drop_duplicates(subset=["pref"])
                     best_score, best_df, best_vc = score, tmp, vc
             return best_df, best_vc
-
-        # まず総数優先で探索
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, total_name_candidates)
             if got is not None:
                 got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
                 return got.sort_values("pref").reset_index(drop=True), val_col
-        # 見つからなければ（allow_rate に応じて）フォールバック
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, fallback_candidates)
             if got is not None:
                 got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
                 return got.sort_values("pref").reset_index(drop=True), val_col
         return None, None
-
     for idx, raw in enumerate(tables):
         got, val_col = pick_value_dataframe(raw)
         if got is not None:
             caption_text = None
             if idx < len(bs_tables):
                 cap = bs_tables[idx].find("caption")
-                if cap:
-                    caption_text = cap.get_text(strip=True)
+                if cap: caption_text = cap.get_text(strip=True)
             label = compose_label(caption_text, val_col, page_h1 or page_title)
             return got, label
-
-    # ここまで到達したら抽出失敗
     return pd.DataFrame(columns=["pref","value"]), "データ"
 
 # -------------------- UI --------------------
-url_a = st.text_input(
-    "X軸（説明変数）URL ＝ 原因・条件の指標",
-    placeholder="https://todo-ran.com/t/kiji/XXXXX",
-    help="総数を優先して使います（順位・偏差値は不可）"
-)
-url_b = st.text_input(
-    "Y軸（目的変数）URL ＝ 結果・反応の指標",
-    placeholder="https://todo-ran.com/t/kiji/YYYYY",
-    help="総数を優先して使います（順位・偏差値は不可）"
-)
+url_a = st.text_input("X軸（説明変数）URL", placeholder="https://todo-ran.com/t/kiji/XXXXX")
+url_b = st.text_input("Y軸（目的変数）URL", placeholder="https://todo-ran.com/t/kiji/YYYYY")
 allow_rate = st.checkbox("割合（率・％・当たり）も対象にする", value=True)
 
 # -------------------- メイン処理 --------------------
@@ -340,84 +297,26 @@ if st.button("相関を計算・表示する", type="primary"):
         df_b, label_b = load_todoran_table(url_b, allow_rate=allow_rate)
     except requests.RequestException as e:
         st.error(f"ページの取得に失敗しました：{e}"); st.stop()
-
     if df_a.empty or df_b.empty:
-        st.error("表の抽出に失敗しました。URLがランキング記事であること、表に『都道府県』列があることを確認してください。"); st.stop()
-
-    # 共通都道府県で結合
-    df = pd.merge(
-        df_a.rename(columns={"value":"value_a"}),
-        df_b.rename(columns={"value":"value_b"}),
-        on="pref", how="inner",
-    )
-
-    # 表示用
+        st.error("表の抽出に失敗しました。"); st.stop()
+    df = pd.merge(df_a.rename(columns={"value":"value_a"}), df_b.rename(columns={"value":"value_b"}), on="pref", how="inner")
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
-
     if len(df) < 3:
-        st.warning("共通データが少ないため、相関係数が不安定です。別の指標でお試しください。"); st.stop()
-
-    # 数値配列（NaN除去）
+        st.warning("共通データが少ないため、相関係数が不安定です。"); st.stop()
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
     pref_all = df.loc[mask0, "pref"].astype(str).to_numpy()
-
-    # 外れ値除外（x または y のどちらかが外れ値なら除外）
     mask_x_in = iqr_mask(x_all, 1.5)
     mask_y_in = iqr_mask(y_all, 1.5)
     mask_inlier = mask_x_in & mask_y_in
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
-
-    # 散布図：外れ値あり／除外（横並び）
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
     col_l, col_r = st.columns(2)
-    with col_l:
-        draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
-    with col_r:
-        draw_scatter_reg_with_metrics(x_in,  y_in,  label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
-
-    # 外れ値表示（縦並び）
-    st.subheader("外れ値（都道府県名）")
-    outs_x = pref_all[~mask_x_in]
-    outs_y = pref_all[~mask_y_in]
-    outs_any = pref_all[~mask_inlier]
-
-    st.markdown("**X軸で外れ値**")
-    st.write("\n".join(map(str, outs_x)) if len(outs_x) else "なし")
-
-    st.markdown("**Y軸で外れ値**")
-    st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
-
-    st.markdown("**除外対象（XまたはY）**")
-    st.write("\n".join(map(str, outs_any)) if len(outs_any) else "なし")
-
-    # CSV保存
-    out_df = pd.DataFrame({
-        "都道府県": pref_all,
-        "X外れ値": ~mask_x_in,
-        "Y外れ値": ~mask_y_in,
-        "除外対象": ~mask_inlier
-    })
-    st.download_button(
-        "外れ値リストをCSVで保存",
-        out_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="outliers.csv",
-        mime="text/csv"
-    )
-
-    # ページ末尾に外れ値の定義
-    st.markdown("---")
-    st.markdown(
-        "#### 外れ値の定義\n"
-        "本ツールでは **IQR法** を用いて外れ値を判定しています。四分位範囲 IQR = Q3 − Q1 とし、\n"
-        "**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。\n"
-        "散布図では、**x または y のどちらかが外れ値**に該当する都道府県を除外して「外れ値除外」図を作成しています。"
-    )
-else:
-    st.info("上の2つの入力欄に とどラン記事のURL を貼ってから「相関を計算・表示する」を押してください。")
+    with col_l: draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値含む）", SCATTER_WIDTH_PX)
+    with col_r: draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図
