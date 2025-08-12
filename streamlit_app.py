@@ -4,6 +4,7 @@
 # 各散布図の直下に n・相関係数r・決定係数r2 を表示。
 # 外れ値（都道府県名）は散布図の下に表示。CSV保存も可。
 # 最下部に外れ値の定義（IQR法）を記載。
+# ※ 修正点：率（割合）列も採用できるオプションを追加。ただし「偏差値」は除外。
 
 import io
 import re
@@ -18,10 +19,10 @@ from pandas.api.types import is_scalar
 from pathlib import Path
 
 # === フォント設定：同梱フォント最優先（なければシステム） ===
-fp = Path("fonts/SourceHanCodeJP-Regular.otf")  # 置いたフォント（同梱推奨）
+fp = Path("fonts/SourceHanCodeJP-Regular.otf")
 if fp.exists():
     fm.fontManager.addfont(str(fp))
-    plt.rcParams["font.family"] = "Source Han Code JP"  # 家族名
+    plt.rcParams["font.family"] = "Source Han Code JP"
 else:
     for name in ["Noto Sans JP","IPAexGothic","Yu Gothic","Hiragino Sans","Meiryo"]:
         try:
@@ -30,18 +31,16 @@ else:
             break
         except Exception:
             pass
-plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の豆腐回避
+plt.rcParams["axes.unicode_minus"] = False
 
 st.set_page_config(page_title="CorrGraph", layout="wide")
 st.title("CorrGraph")
-st.write(
-    "とどランの **各ランキング記事のURL** を2つ貼り付けてください。"
-)
+st.write("とどランの **各ランキング記事のURL** を2つ貼り付けてください。")
 
 # -------------------- 表示サイズ --------------------
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
 EXPORT_DPI = 200
-SCATTER_WIDTH_PX = 480   # 横並び2枚で収まる幅
+SCATTER_WIDTH_PX = 480
 
 def show_fig(fig, width_px: int):
     buf = io.BytesIO()
@@ -65,8 +64,8 @@ TOTAL_KEYWORDS = [
     "総数","合計","件数","人数","人口","世帯","戸数","台数","店舗数","病床数","施設数",
     "金額","額","費用","支出","収入","販売額","生産額","生産量","面積","延べ","延","数",
 ]
-RATE_WORDS = ["率","割合","比率","％","パーセント","人当たり","一人当たり","人口当たり","千人当たり","10万人当たり","当たり","戸建て率",]
-EXCLUDE_WORDS = ["順位","偏差値"]
+RATE_WORDS = ["率","割合","比率","％","パーセント","人当たり","一人当たり","人口当たり","千人当たり","10万人当たり","当たり","戸建て率"]
+EXCLUDE_WORDS = ["順位","偏差値"]  # ← 偏差値は引き続き除外
 
 # -------------------- ユーティリティ --------------------
 def to_number(x) -> float:
@@ -98,7 +97,6 @@ def fmt(v: float) -> str:
     return "-" if (v is None or not np.isfinite(v)) else f"{v:.4f}"
 
 def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str, title: str, width_px: int):
-    """散布図＋回帰直線（日本語）を描き、直下に n, r, r2 を表示"""
     fig, ax = plt.subplots(figsize=(BASE_W_INCH, BASE_H_INCH))
     ax.scatter(x, y, label="データ点")
 
@@ -128,6 +126,12 @@ def draw_scatter_reg_with_metrics(x: np.ndarray, y: np.ndarray, la: str, lb: str
     st.caption(f"決定係数 r2 = {fmt(r2)}")
 
 def flatten_columns(cols) -> list:
+    """列名を平坦化し、空白や改行を除去して正規化（例：'総 数'→'総数'）。"""
+    def _normalize(c: str) -> str:
+        c = str(c).strip()
+        c = re.sub(r"\s+", "", c)  # 半角/全角スペース・改行を詰める
+        return c
+
     if isinstance(cols, pd.MultiIndex):
         flat = []
         for tup in cols:
@@ -135,8 +139,8 @@ def flatten_columns(cols) -> list:
             parts = [p for p in parts if not p.startswith("Unnamed")]
             name = " ".join(parts).strip()
             flat.append(name if name else "col")
-        return flat
-    return [str(c).strip() for c in cols]
+        return [_normalize(c) for c in flat]
+    return [_normalize(c) for c in cols]
 
 def make_unique(seq: list) -> list:
     seen, out = {}, []
@@ -167,7 +171,8 @@ def compose_label(caption: str | None, val_col: str | None, page_title: str | No
 
 # -------------------- URL → (DataFrame, ラベル) --------------------
 @st.cache_data(show_spinner=False)
-def load_todoran_table(url: str, version: int = 27):
+def load_todoran_table(url: str, allow_rate: bool = True, version: int = 28):
+    """allow_rate=True で率・割合列も候補に含める。偏差値/順位は除外のまま。"""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -193,6 +198,7 @@ def load_todoran_table(url: str, version: int = 27):
         df = df.loc[:, ~df.columns.duplicated()]
 
         cols = list(df.columns)
+        # 都道府県列の候補
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名","道府県","府県"))]
         if not pref_cols:
             return None, None
@@ -201,9 +207,20 @@ def load_todoran_table(url: str, version: int = 27):
             n = str(name)
             return any(w in n for w in EXCLUDE_WORDS)
 
-        raw_value_candidates = [c for c in cols if (c not in ("順位","都道府県","道府県","県名","府県")) and (not bad_name(c))]
-        total_name_candidates = [c for c in raw_value_candidates if any(k in c for k in TOTAL_KEYWORDS) and not any(r in c for r in RATE_WORDS)]
-        fallback_candidates   = [c for c in raw_value_candidates if not any(r in c for r in RATE_WORDS)]
+        # 「順位」「偏差値」などを除いた値候補（率を含むかは後で分岐）
+        raw_value_candidates = [
+            c for c in cols
+            if (c not in ("順位","都道府県","道府県","県名","府県")) and (not bad_name(c))
+        ]
+
+        # 総数キーワードにヒットする列（優先）
+        total_name_candidates = [c for c in raw_value_candidates if any(k in c for k in TOTAL_KEYWORDS)]
+
+        # フォールバック候補：allow_rate で分岐
+        if allow_rate:
+            fallback_candidates = raw_value_candidates[:]   # 率・割合も許可
+        else:
+            fallback_candidates = [c for c in raw_value_candidates if not any(rw in c for rw in RATE_WORDS)]
 
         def score_and_build(pref_col: str, candidate_cols: list):
             best_score, best_df, best_vc = -1, None, None
@@ -221,6 +238,7 @@ def load_todoran_table(url: str, version: int = 27):
                 if isinstance(col, pd.DataFrame):
                     col = col.iloc[:, 0]
                 col_num = pd.to_numeric(col.map(to_number), errors="coerce").loc[mask]
+                # 順位っぽい列は除外
                 if is_rank_like(col_num):
                     continue
                 base = int(col_num.notna().sum())
@@ -232,11 +250,13 @@ def load_todoran_table(url: str, version: int = 27):
                     best_score, best_df, best_vc = score, tmp, vc
             return best_df, best_vc
 
+        # まず総数優先で探索
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, total_name_candidates)
             if got is not None:
                 got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
                 return got.sort_values("pref").reset_index(drop=True), val_col
+        # 見つからなければ（allow_rate に応じて）フォールバック
         for pref_col in pref_cols:
             got, val_col = score_and_build(pref_col, fallback_candidates)
             if got is not None:
@@ -282,21 +302,23 @@ def load_todoran_table(url: str, version: int = 27):
 url_a = st.text_input(
     "X軸（説明変数）URL ＝ 原因・条件の指標",
     placeholder="https://todo-ran.com/t/kiji/XXXXX",
-    help="総数の指標を選んでください（順位・偏差値は不可）"
+    help="総数の指標を優先して使います（順位・偏差値は不可）"
 )
 url_b = st.text_input(
     "Y軸（目的変数）URL ＝ 結果・反応の指標",
     placeholder="https://todo-ran.com/t/kiji/YYYYY",
-    help="総数の指標を選んでください（順位・偏差値は不可）"
+    help="総数の指標を優先して使います（順位・偏差値は不可）"
 )
+# 率・割合も許可するか（既定：許可）
+allow_rate = st.checkbox("割合（率・％・当たり）も対象にする", value=True)
 
 # -------------------- メイン処理 --------------------
 if st.button("相関を計算・表示する", type="primary"):
     if not url_a or not url_b:
         st.error("2つのURLを入力してください。"); st.stop()
     try:
-        df_a, label_a = load_todoran_table(url_a)
-        df_b, label_b = load_todoran_table(url_b)
+        df_a, label_a = load_todoran_table(url_a, allow_rate=allow_rate)
+        df_b, label_b = load_todoran_table(url_b, allow_rate=allow_rate)
     except requests.RequestException as e:
         st.error(f"ページの取得に失敗しました：{e}"); st.stop()
 
@@ -333,7 +355,7 @@ if st.button("相関を計算・表示する", type="primary"):
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
 
-    # 散布図：外れ値あり／除外（横並び）→ 各図の直下に n, r, r2
+    # 散布図：外れ値あり／除外（横並び）
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
     col_l, col_r = st.columns(2)
     with col_l:
@@ -341,7 +363,7 @@ if st.button("相関を計算・表示する", type="primary"):
     with col_r:
         draw_scatter_reg_with_metrics(x_in,  y_in,  label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
 
-    # --- ここから外れ値（都道府県名）を散布図の「下」に表示 ---
+    # 外れ値（都道府県名）表示
     st.subheader("外れ値（都道府県名）")
     c1, c2, c3 = st.columns(3)
     outs_x = pref_all[~mask_x_in]
@@ -369,7 +391,6 @@ if st.button("相関を計算・表示する", type="primary"):
         file_name="outliers.csv",
         mime="text/csv"
     )
-    # --- ここまで外れ値表示 ---
 
     # ページ末尾に外れ値の定義
     st.markdown("---")
