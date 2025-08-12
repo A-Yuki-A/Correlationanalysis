@@ -34,6 +34,112 @@ else:
 plt.rcParams["axes.unicode_minus"] = False
 
 st.set_page_config(page_title="CorrGraph", layout="wide")
+# ====== ここから追加：UIテーマ（グレースケール＆アクセシビリティ） ======
+# Matplotlib をグレースケール化（凡例・線・点をモノトーンに）
+plt.style.use("grayscale")
+plt.rcParams.update({
+    "figure.facecolor": "white",
+    "axes.edgecolor": "black",
+    "axes.labelcolor": "black",
+    "xtick.color": "black",
+    "ytick.color": "black",
+    "grid.color": "#888",
+    "grid.linestyle": "--",
+    "grid.alpha": 0.3,
+})
+# 点や線を少し太くして視認性UP（お好みで調整）
+DEFAULT_MARKER_SIZE = 36
+DEFAULT_LINE_WIDTH = 2.0
+
+# draw_scatter_reg_with_metrics 内の scatter/plot に引数を渡せるように、関数の先頭に以下を追加
+# ax.scatter(x, y, s=DEFAULT_MARKER_SIZE)
+# ax.plot(xs, slope * xs + intercept, linewidth=DEFAULT_LINE_WIDTH)
+
+# ページの中央寄せ・左右余白、文字のコントラスト、フォーカス枠などをCSSで調整
+st.markdown("""
+<style>
+/* 画面全体の背景：薄いグレー、本文は濃いグレーで高コントラスト */
+html, body, [data-testid="stAppViewContainer"] {
+  color: #111 !important;
+  background: #f5f5f5 !important;
+}
+
+/* メインコンテナを中央寄せ＋左右余白（max-width） */
+.block-container {
+  max-width: 980px;      /* ページの横幅上限＝左右に余白が生まれる */
+  padding-top: 1.2rem;
+  padding-bottom: 3rem;
+}
+
+/* 見出しの余白と太さを少し強調（モノトーン） */
+h1, h2, h3 {
+  color: #111 !important;
+  letter-spacing: .01em;
+}
+h1 { font-weight: 800; }
+h2 { font-weight: 700; }
+h3 { font-weight: 700; }
+
+/* 本文の行間を広げて読みやすく */
+p, li, .stMarkdown {
+  line-height: 1.8;
+  font-size: 1.02rem;
+}
+
+/* 入力UIのコントラストとフォーカス可視化（キーボード操作に配慮） */
+input, textarea, select, .stTextInput > div > div > input {
+  border: 1.5px solid #333 !important;
+  background: #fff !important;
+  color: #111 !important;
+}
+:focus-visible, input:focus, textarea:focus, select:focus,
+button:focus, [role="button"]:focus {
+  outline: 3px solid #000 !important;   /* 黒いフォーカスリング */
+  outline-offset: 2px !important;
+}
+
+/* ボタンをモノトーンで高コントラストに */
+button[kind="primary"], .stButton>button {
+  background: #222 !important;
+  color: white !important;
+  border: 1.5px solid #000 !important;
+  box-shadow: none !important;
+}
+button[kind="primary"]:hover, .stButton>button:hover {
+  filter: brightness(1.2);
+}
+
+/* テーブルの見やすさ（ヘッダ濃色・行の縞） */
+[data-testid="stDataFrame"] thead tr th {
+  background: #e8e8e8 !important;
+  color: #111 !important;
+  font-weight: 700 !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) {
+  background: #fafafa !important;
+}
+
+/* キャプションの文字サイズを少し上げる（読取りやすさ） */
+.small-font, .caption, .stCaption, figcaption {
+  font-size: 0.98rem !important;
+  color: #222 !important;
+}
+
+/* リンクは下線付き（色弱にも判別しやすく） */
+a, a:visited {
+  color: #000 !important;
+  text-decoration: underline !important;
+}
+
+/* 余白を少しゆったり */
+section[data-testid="stSidebar"], .block-container {
+  scroll-behavior: smooth;
+}
+</style>
+""", unsafe_allow_html=True)
+# ====== ここまで追加 ======
+
+
 st.title("CorrGraph")
 st.write("とどランの **各ランキング記事のURL** を2つ貼り付けてください。")
 
