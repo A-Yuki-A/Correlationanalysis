@@ -4,7 +4,7 @@
 # ・「偏差値」や「順位」列は除外
 # ・外れ値は「X軸で外れ値」「Y軸で外れ値」のみ横並び2カラム表示
 # ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮／タイトル余白修正
-# ・AI分析（ボタンを押すと結果を表示）
+# ・AI分析（計算結果をSessionに保存→ボタン外置き）
 
 import io
 import re
@@ -122,22 +122,16 @@ def show_fig(fig, width_px: int):
 
 def to_number(x) -> float:
     if not is_scalar(x):
-        try:
-            x = x.item()
-        except Exception:
-            return np.nan
+        try: x = x.item()
+        except Exception: return np.nan
     s = str(x).replace(",", "").replace("　", " ").replace("％", "%").strip()
     m = re.search(r"-?\d+(?:\.\d+)?", s)
-    if not m:
-        return np.nan
-    try:
-        return float(m.group(0))
-    except Exception:
-        return np.nan
+    if not m: return np.nan
+    try: return float(m.group(0))
+    except Exception: return np.nan
 
 def iqr_mask(arr: np.ndarray, k: float = 1.5) -> np.ndarray:
-    if arr.size == 0:
-        return np.array([], dtype=bool)
+    if arr.size == 0: return np.array([], dtype=bool)
     q1 = np.nanpercentile(arr, 25)
     q3 = np.nanpercentile(arr, 75)
     iqr = q3 - q1
@@ -199,8 +193,7 @@ def make_unique(seq):
 
 def is_rank_like(nums):
     s = pd.to_numeric(nums, errors="coerce").dropna()
-    if s.empty:
-        return False
+    if s.empty: return False
     ints = (np.abs(s - np.round(s)) < 1e-9)
     share_int = float(ints.mean())
     in_range = float(((s >= 1) & (s <= 60)).mean())
@@ -215,8 +208,7 @@ def compose_label(caption, val_col, page_title):
 
 # ===== 相関ユーティリティ（AI分析で使用） =====
 def strength_label(r: float) -> str:
-    if r is None or not np.isfinite(r):
-        return "判定不可"
+    if r is None or not np.isfinite(r): return "判定不可"
     a = abs(r)
     if a >= 0.7: return "強い"
     if a >= 0.4: return "中程度"
@@ -259,8 +251,7 @@ def load_todoran_table(url: str, allow_rate: bool = True):
         df = df.loc[:, ~df.columns.duplicated()]
         cols = list(df.columns)
         pref_cols = [c for c in cols if ("都道府県" in c) or (c in ("県名","道府県","府県"))]
-        if not pref_cols:
-            return None, None
+        if not pref_cols: return None, None
 
         def bad_name(name: str) -> bool:
             return any(w in str(name) for w in EXCLUDE_WORDS)
@@ -279,17 +270,14 @@ def load_todoran_table(url: str, allow_rate: bool = True):
                 pref_series = pref_series.iloc[:, 0]
             pref_series = pref_series.map(lambda x: str(x).strip())
             mask = pref_series.isin(PREF_SET).to_numpy()
-            if not mask.any():
-                return None, None
+            if not mask.any(): return None, None
             for vc in candidate_cols:
-                if vc not in df.columns:
-                    continue
+                if vc not in df.columns: continue
                 col = df[vc]
                 if isinstance(col, pd.DataFrame):
                     col = col.iloc[:, 0]
                 col_num = pd.to_numeric(col.map(to_number), errors="coerce").loc[mask]
-                if is_rank_like(col_num):
-                    continue
+                if is_rank_like(col_num): continue
                 base = int(col_num.notna().sum())
                 bonus = 15 if any(k in vc for k in TOTAL_KEYWORDS) else 0
                 score = base + bonus
@@ -319,8 +307,7 @@ def load_todoran_table(url: str, allow_rate: bool = True):
             caption_text = None
             if idx < len(bs_tables):
                 cap = bs_tables[idx].find("caption")
-                if cap:
-                    caption_text = cap.get_text(strip=True)
+                if cap: caption_text = cap.get_text(strip=True)
             label = compose_label(caption_text, val_col, page_h1 or page_title)
             return got, label
     return pd.DataFrame(columns=["pref","value"]), "データ"
@@ -330,7 +317,7 @@ url_a = st.text_input("X軸（説明変数）URL", placeholder="https://todo-ran
 url_b = st.text_input("Y軸（目的変数）URL", placeholder="https://todo-ran.com/t/kiji/YYYYY")
 allow_rate = st.checkbox("割合（率・％・当たり）も対象にする", value=True)
 
-# -------------------- メイン処理 --------------------
+# -------------------- メイン処理（計算実行ボタン） --------------------
 if st.button("相関を計算・表示する", type="primary"):
     if not url_a or not url_b:
         st.error("2つのURLを入力してください。"); st.stop()
@@ -407,16 +394,29 @@ if st.button("相関を計算・表示する", type="primary"):
 
     st.markdown("---")
 
-    # ===== AI分析（ボタンを押したら表示） =====
-    if st.button("AI分析"):
-        r_all = safe_pearson(x_all, y_all)
-        r_in  = safe_pearson(x_in,  y_in)
-        r2_all = (r_all**2) if np.isfinite(r_all) else np.nan
-        r2_in  = (r_in**2)  if np.isfinite(r_in)  else np.nan
-        rho_all = safe_spearman(x_all, y_all)
+    # ===== 計算結果を session_state に保存（AI分析用）=====
+    st.session_state.calc = {
+        "x_all": x_all, "y_all": y_all, "x_in": x_in, "y_in": y_in,
+        "outs_x": outs_x, "outs_y": outs_y,
+        "label_a": label_a, "label_b": label_b
+    }
 
-        st.subheader("AI分析")
-        st.markdown(f"""
+# -------------------- AI分析（独立ボタン：常に画面下に表示） --------------------
+ai_disabled = ("calc" not in st.session_state)
+if st.button("AI分析", disabled=ai_disabled):
+    c = st.session_state.calc  # 計算済みデータを取得
+    x_all = c["x_all"]; y_all = c["y_all"]; x_in = c["x_in"]; y_in = c["y_in"]
+    outs_x = c["outs_x"]; outs_y = c["outs_y"]
+    label_a = c["label_a"]; label_b = c["label_b"]
+
+    r_all = safe_pearson(x_all, y_all)
+    r_in  = safe_pearson(x_in,  y_in)
+    r2_all = (r_all**2) if np.isfinite(r_all) else np.nan
+    r2_in  = (r_in**2)  if np.isfinite(r_in)  else np.nan
+    rho_all = safe_spearman(x_all, y_all)
+
+    st.subheader("AI分析")
+    st.markdown(f"""
 - サンプル数: 全データ **n={len(x_all)}** ／ 外れ値除外 **n={len(x_in)}**
 - ピアソン相関: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
 - 決定係数: 全データ **r²={r2_all if np.isfinite(r2_all) else float('nan'):.3f}** ／ 外れ値除外 **r²={r2_in if np.isfinite(r2_in) else float('nan'):.3f}**
@@ -424,18 +424,16 @@ if st.button("相関を計算・表示する", type="primary"):
 - 外れ値件数: X軸 **{len(outs_x)}件** ／ Y軸 **{len(outs_y)}件**
 """)
 
-        # やわらかい解説（見出し名はお好みで変更可）
-        st.info(
-            "**結果の読み方**\n"
-            "- 相関は「二つの項目が一緒に増減する傾向」を示します。**原因と結果を直接示すものではありません。**\n"
-            "- 疑似相関は、人口や面積など**共通の要因**が両方に効いて「関係があるように見える」状態です。\n"
-            "- 因果を確かめるには、時系列の比較や条件をそろえた検証など、**追加の分析**が必要です。"
-        )
-    # ===== ここまで AI分析 =====
-
-    # 外れ値の定義（IQR法）
-    st.markdown(
-        "#### 外れ値の定義（IQR法）\n"
-        "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
-        " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
+    st.info(
+        "**結果の読み方**\n"
+        "- 相関は「二つの項目が一緒に増減する傾向」を示します。**原因と結果を直接示すものではありません。**\n"
+        "- 疑似相関は、人口や面積など**共通の要因**が両方に効いて「関係があるように見える」状態です。\n"
+        "- 因果を確かめるには、時系列の比較や条件をそろえた検証など、**追加の分析**が必要です。"
     )
+
+# 外れ値の定義（IQR法）
+st.markdown(
+    "#### 外れ値の定義（IQR法）\n"
+    "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
+    " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
+)
