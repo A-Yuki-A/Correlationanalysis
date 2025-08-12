@@ -470,33 +470,23 @@ if st.button("相関を計算・表示する", type="primary"):
         draw_scatter_reg_with_metrics(x_in,  y_in,  label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
 
     # 外れ値（都道府県名）表示
-    st.subheader("外れ値（都道府県名）")
-    c1, c2, c3 = st.columns(3)
-    outs_x = pref_all[~mask_x_in]
-    outs_y = pref_all[~mask_y_in]
-    outs_any = pref_all[~mask_inlier]
-    with c1:
-        st.markdown("**X軸で外れ値**")
-        st.write("、".join(map(str, outs_x)) if len(outs_x) else "なし")
-    with c2:
-        st.markdown("**Y軸で外れ値**")
-        st.write("、".join(map(str, outs_y)) if len(outs_y) else "なし")
-    with c3:
-        st.markdown("**除外対象（XまたはY）**")
-        st.write("、".join(map(str, outs_any)) if len(outs_any) else "なし")
+    # --- ここから変更 ---
+st.subheader("外れ値（都道府県名）")
 
-    out_df = pd.DataFrame({
-        "都道府県": pref_all,
-        "X外れ値": ~mask_x_in,
-        "Y外れ値": ~mask_y_in,
-        "除外対象": ~mask_inlier
-    })
-    st.download_button(
-        "外れ値リストをCSVで保存",
-        out_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="outliers.csv",
-        mime="text/csv"
-    )
+outs_x = pref_all[~mask_x_in]
+outs_y = pref_all[~mask_y_in]
+outs_any = pref_all[~mask_inlier]
+
+st.markdown("**X軸で外れ値**")
+st.write("\n".join(map(str, outs_x)) if len(outs_x) else "なし")
+
+st.markdown("**Y軸で外れ値**")
+st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
+
+st.markdown("**除外対象（XまたはY）**")
+st.write("\n".join(map(str, outs_any)) if len(outs_any) else "なし")
+# --- ここまで変更 ---
+
 
     # ページ末尾に外れ値の定義
     st.markdown("---")
