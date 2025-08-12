@@ -448,7 +448,7 @@ ai_disabled = ("calc" not in st.session_state) or (st.session_state.get("calc") 
 do_ai = st.button("AI分析", key="btn_ai", disabled=ai_disabled)
 
 if do_ai and not ai_disabled:
-    c = st.session_state.calc  # 計算済みデータを取得
+    c = st.session_state.calc
     x_all = c["x_all"]; y_all = c["y_all"]; x_in = c["x_in"]; y_in = c["y_in"]
     outs_x = c["outs_x"]; outs_y = c["outs_y"]
     label_a = c["label_a"]; label_b = c["label_b"]
@@ -460,7 +460,7 @@ if do_ai and not ai_disabled:
     r2_in  = (r_in**2)  if np.isfinite(r_in)  else np.nan
     rho_all = safe_spearman(x_all, y_all)
 
-    # ---- ここから：AIの総合コメント（最上部に表示）----
+    # ---- ここから：AIの総合コメント（評価対象の明記付き）----
     def has_any(s, words):
         t = str(s or "")
         return any(w in t for w in words)
@@ -470,8 +470,11 @@ if do_ai and not ai_disabled:
     EFFECT_LIKE = ["件数","死亡率","事故","販売","売上","利用","満足度","待機児童","志願者","合格率","歩留","欠席","感染","犯罪","通報","受診","受給","離職"]
 
     # 相関の強さ（外れ値除外を優先して判定）
-    corr_strength = strength_label(r_in if np.isfinite(r_in) else r_all)
+    basis_is_inlier = np.isfinite(r_in)
+    corr_for_label = r_in if basis_is_inlier else r_all
+    corr_strength = strength_label(corr_for_label)
     corr_exists = (corr_strength not in ("ほとんどない", "判定不可"))
+    basis_label = "外れ値除外データ" if basis_is_inlier else "全データ（外れ値含む）"
 
     # 疑似相関（規模効果/共通分母/外れ値駆動）
     la, lb = str(label_a), str(label_b)
@@ -509,9 +512,10 @@ if do_ai and not ai_disabled:
             relation = "相関は確認できますが、因果かどうかはこのデータだけでは判断できません。"
             reason = "追加のデータや検証が必要です。"
 
-    # ★最上部に強調表示（AIの総合コメント）
-    st.success(f"**AI総合コメント**：{relation}")
+    # ★最上部に強調表示（AIの総合コメント）— 評価対象を明示
+    st.success(f"**AI総合コメント（評価対象：{basis_label}）**：{relation}")
     st.markdown("**理由（要約）**\n\n" + reason)
+    # ---- ここまで：AIの総合コメント ----
 
     # 以下、数値の内訳
     st.subheader("AI分析")
@@ -535,4 +539,13 @@ st.markdown(
     "#### 外れ値の定義（IQR法）\n"
     "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
     " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
+)
+
+# ★ 追加：スピアマン順位相関の説明（IQRのすぐ下に表示）
+st.markdown(
+    "#### スピアマン順位相関とは\n"
+    "データの**値そのもの**ではなく、**順位（大小関係）**に置き換えて相関の強さを調べる方法です（記号は ρ）。\n"
+    "- **外れ値の影響を受けにくい**、分布が歪んでいても使いやすい。\n"
+    "- 直線関係でなくても、**単調な関係**（増えるとだいたい増える／減る）があるかを捉えられます。\n"
+    "- 値の範囲は **−1 〜 +1**（±1 に近いほど関係が強い）。"
 )
