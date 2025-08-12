@@ -517,7 +517,7 @@ if do_ai and not ai_disabled:
     st.subheader("AI分析")
     st.markdown(f"""
 - サンプル数: 全データ **n={len(x_all)}** ／ 外れ値除外 **n={len(x_in)}**
-- ピアソン相関: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
+- 相関係数: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
 - 決定係数: 全データ **r²={r2_all if np.isfinite(r2_all) else float('nan'):.3f}** ／ 外れ値除外 **r²={r2_in if np.isfinite(r2_in) else float('nan'):.3f}**
 - スピアマン順位相関（全データ）: **ρ={rho_all if np.isfinite(rho_all) else float('nan'):.3f}**
 - 外れ値件数: X軸 **{len(outs_x)}件** ／ Y軸 **{len(outs_y)}件**
