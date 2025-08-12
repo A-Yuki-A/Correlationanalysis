@@ -322,4 +322,45 @@ if st.button("相関を計算・表示する", type="primary"):
         draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
     with col_r:
         draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
+        # ===== ここから追記：外れ値の表示（横並び2カラム）と外れ値の定義 =====
+    # X軸・Y軸それぞれで外れ値に該当した都道府県名を抽出
+    outs_x = pref_all[~mask_x_in]
+    outs_y = pref_all[~mask_y_in]
+
+    st.subheader("外れ値（都道府県名）")
+    col_x, col_y = st.columns(2)
+
+    with col_x:
+        st.markdown("**X軸で外れ値**")
+        st.write("\n".join(map(str, outs_x)) if len(outs_x) else "なし")
+
+    with col_y:
+        st.markdown("**Y軸で外れ値**")
+        st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
+
+    # （任意）CSV保存：必要なければこのブロックは削除可
+    out_df = pd.DataFrame({
+        "都道府県": pref_all,
+        "X外れ値": ~mask_x_in,
+        "Y外れ値": ~mask_y_in,
+        "除外対象": ~(mask_x_in & mask_y_in),
+    })
+    st.download_button(
+        "外れ値リストをCSVで保存",
+        out_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="outliers.csv",
+        mime="text/csv"
+    )
+
+    # 区切り線
+    st.markdown("---")
+
+    # 外れ値の定義（IQR法）
+    st.markdown(
+        "#### 外れ値の定義（IQR法）\n"
+        "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上 限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
+        " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
+    )
+    # ===== ここまで追記 =====
+
 
