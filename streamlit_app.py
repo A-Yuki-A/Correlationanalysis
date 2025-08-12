@@ -4,6 +4,7 @@
 # ・「偏差値」や「順位」列は除外
 # ・外れ値は「X軸で外れ値」「Y軸で外れ値」のみ横並び2カラム表示
 # ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮／タイトル余白修正
+# ・AI分析（相関/因果/疑似相関の簡易判定）追加
 
 import io
 import re
@@ -205,6 +206,35 @@ def compose_label(caption, val_col, page_title):
             return str(s).strip()
     return "データ"
 
+# ===== AI分析ユーティリティ =====
+def strength_label(r: float) -> str:
+    if r is None or not np.isfinite(r): return "判定不可"
+    a = abs(r)
+    if a >= 0.7: return "強い"
+    if a >= 0.4: return "中程度"
+    if a >= 0.2: return "弱い"
+    return "ほとんどない"
+
+def safe_pearson(x, y):
+    ok = np.isfinite(x) & np.isfinite(y)
+    if ok.sum() < 2 or np.nanstd(x[ok]) == 0 or np.nanstd(y[ok]) == 0:
+        return np.nan
+    return float(np.corrcoef(x[ok], y[ok])[0, 1])
+
+def safe_spearman(x, y):
+    x_rank = pd.Series(x).rank(method="average").to_numpy()
+    y_rank = pd.Series(y).rank(method="average").to_numpy()
+    return safe_pearson(x_rank, y_rank)
+
+def has_any(s, words):
+    t = str(s or "")
+    return any(w in t for w in words)
+
+# 因果/疑似相関判定用キーワード
+COMMON_DENOMS = ["人口","人","世帯","面積","県内総生産","GDP","生徒数","児童数","車両数","病床数"]
+CAUSE_LIKE = ["支出","投資","施策","設備","普及率","導入率","供給","提供","価格","気温","降水","日照","所得","収入","賃金","教育","医師数","教員数"]
+EFFECT_LIKE = ["件数","死亡率","事故","販売","売上","利用","満足度","待機児童","志願者","合格率","歩留","欠席","感染","犯罪","通報","受診","受給","離職"]
+
 # -------------------- URL読み込み --------------------
 @st.cache_data(show_spinner=False)
 def load_todoran_table(url: str, allow_rate: bool = True):
@@ -299,46 +329,54 @@ if st.button("相関を計算・表示する", type="primary"):
         st.error(f"ページの取得に失敗しました：{e}"); st.stop()
     if df_a.empty or df_b.empty:
         st.error("表の抽出に失敗しました。"); st.stop()
-    df = pd.merge(df_a.rename(columns={"value":"value_a"}), df_b.rename(columns={"value":"value_b"}), on="pref", how="inner")
+
+    df = pd.merge(df_a.rename(columns={"value":"value_a"}),
+                  df_b.rename(columns={"value":"value_b"}), on="pref", how="inner")
+
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
+
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。"); st.stop()
+
+    # 数値化と欠損除去
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
     pref_all = df.loc[mask0, "pref"].astype(str).to_numpy()
+
+    # IQR外れ値（軸ごと）
     mask_x_in = iqr_mask(x_all, 1.5)
     mask_y_in = iqr_mask(y_all, 1.5)
     mask_inlier = mask_x_in & mask_y_in
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
+
+    # 散布図（左右）
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
     col_l, col_r = st.columns(2)
     with col_l:
         draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
     with col_r:
         draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
-        # ===== ここから追記：外れ値の表示（横並び2カラム）と外れ値の定義 =====
-    # X軸・Y軸それぞれで外れ値に該当した都道府県名を抽出
+
+    # 外れ値リスト
     outs_x = pref_all[~mask_x_in]
     outs_y = pref_all[~mask_y_in]
 
     st.subheader("外れ値（都道府県名）")
     col_x, col_y = st.columns(2)
-
     with col_x:
         st.markdown("**X軸で外れ値**")
         st.write("\n".join(map(str, outs_x)) if len(outs_x) else "なし")
-
     with col_y:
         st.markdown("**Y軸で外れ値**")
         st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
 
-    # （任意）CSV保存：必要なければこのブロックは削除可
+    # CSV保存
     out_df = pd.DataFrame({
         "都道府県": pref_all,
         "X外れ値": ~mask_x_in,
@@ -352,104 +390,64 @@ if st.button("相関を計算・表示する", type="primary"):
         mime="text/csv"
     )
 
-    # 区切り線
     st.markdown("---")
 
-    # 外れ値の定義（IQR法）
-    st.markdown(
-        "#### 外れ値の定義（IQR法）\n"
-        "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上 限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
-        " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
-    )
-    # ===== ここまで追記 =====
-# ===== AI分析（ボタンで表示切替＋因果/疑似相関の簡易判定） =====
-def strength_label(r: float) -> str:
-    if r is None or not np.isfinite(r): return "判定不可"
-    a = abs(r)
-    if a >= 0.7: return "強い"
-    if a >= 0.4: return "中程度"
-    if a >= 0.2: return "弱い"
-    return "ほとんどない"
+    # ===== AI分析（ボタンで表示切替＋因果/疑似相関の簡易判定） =====
+    if "show_ai" not in st.session_state:
+        st.session_state.show_ai = False
+    if st.button("AI分析"):
+        st.session_state.show_ai = not st.session_state.show_ai
 
-def safe_pearson(x, y):
-    ok = np.isfinite(x) & np.isfinite(y)
-    if ok.sum() < 2 or np.nanstd(x[ok])==0 or np.nanstd(y[ok])==0:
-        return np.nan
-    return float(np.corrcoef(x[ok], y[ok])[0,1])
+    if st.session_state.show_ai:
+        # 数値指標
+        r_all = safe_pearson(x_all, y_all)
+        r2_all = (r_all**2) if np.isfinite(r_all) else np.nan
+        r_in  = safe_pearson(x_in, y_in)
+        r2_in = (r_in**2) if np.isfinite(r_in) else np.nan
+        rho_all = safe_spearman(x_all, y_all)
 
-def safe_spearman(x, y):
-    # 順位にしてからピアソン → スピアマンの代用
-    x_rank = pd.Series(x).rank(method="average").to_numpy()
-    y_rank = pd.Series(y).rank(method="average").to_numpy()
-    return safe_pearson(x_rank, y_rank)
+        # 相関の有無（外れ値除外を優先）
+        corr_strength = strength_label(r_in if np.isfinite(r_in) else r_all)
+        corr_exists = (corr_strength not in ("ほとんどない", "判定不可"))
 
-def has_any(s, words):
-    t = str(s or "")
-    return any(w in t for w in words)
+        # 疑似相関の検出（規模効果/共通分母/外れ値駆動）
+        la, lb = str(label_a), str(label_b)
+        both_rate = (has_any(la, RATE_WORDS) and has_any(lb, RATE_WORDS))
+        both_total = (not has_any(la, RATE_WORDS) and not has_any(lb, RATE_WORDS))
+        share_denom = any((d in la) and (d in lb) for d in COMMON_DENOMS)
 
-# 因果/疑似相関判定のためのキーワード
-RATE_WORDS_SET = set(RATE_WORDS)
-COMMON_DENOMS = ["人口","人","世帯","面積","県内総生産","GDP","生徒数","児童数","車両数","病床数"]
-CAUSE_LIKE = ["支出","投資","施策","設備","普及率","導入率","供給","提供","価格","気温","降水","日照","所得","収入","賃金","教育","医師数","教員数"]
-EFFECT_LIKE = ["件数","死亡率","事故","販売","売上","利用","満足度","待機児童","志願者","合格率","歩留","欠席","感染","犯罪","通報","受診","受給","離職"]
+        pseudo_flags = []
+        if both_total:
+            pseudo_flags.append("両方とも“総数系”で、人口規模が大きい都道府県ほど数が多くなるため相関が出やすい（規模効果）")
+        if both_rate or share_denom:
+            pseudo_flags.append("両方が同じ“分母（人口など）”に依存している可能性がある（共通分母による相関）")
+        if np.isfinite(r_all) and np.isfinite(r_in) and (abs(r_all) - abs(r_in) >= 0.15):
+            pseudo_flags.append("外れ値が相関を強く見せていた可能性")
 
-# セッション状態で表示ON/OFFを保持
-if "show_ai" not in st.session_state:
-    st.session_state.show_ai = False
+        # 因果の向きの“仮説”
+        cause_hint = None
+        if has_any(la, CAUSE_LIKE) and has_any(lb, EFFECT_LIKE):
+            cause_hint = f"『{label_a} → {label_b}』の因果がありそう（仮説）"
+        elif has_any(lb, CAUSE_LIKE) and has_any(la, EFFECT_LIKE):
+            cause_hint = f"『{label_b} → {label_a}』の因果がありそう（仮説）"
 
-if st.button("AI分析"):
-    st.session_state.show_ai = not st.session_state.show_ai
-
-if st.session_state.show_ai:
-    # 指標計算
-    r_all = safe_pearson(x_all, y_all)
-    r2_all = (r_all**2) if np.isfinite(r_all) else np.nan
-    r_in  = safe_pearson(x_in, y_in)
-    r2_in = (r_in**2) if np.isfinite(r_in) else np.nan
-    rho_all = safe_spearman(x_all, y_all)
-
-    # 相関の有無（外れ値除外で判断を優先）
-    corr_strength = strength_label(r_in if np.isfinite(r_in) else r_all)
-    corr_exists = (corr_strength != "ほとんどない" and corr_strength != "判定不可")
-
-    # 疑似相関（規模効果/共通分母）の検出
-    la, lb = str(label_a), str(label_b)
-    both_rate = (has_any(la, RATE_WORDS) and has_any(lb, RATE_WORDS))
-    both_total = (not has_any(la, RATE_WORDS) and not has_any(lb, RATE_WORDS))
-    share_denom = any((d in la) and (d in lb) for d in COMMON_DENOMS)
-
-    pseudo_flags = []
-    if both_total:
-        pseudo_flags.append("両方とも“総数系”で、人口規模が大きい都道府県ほど数が多くなるため相関が出やすい（規模効果）")
-    if both_rate or share_denom:
-        pseudo_flags.append("両方が同じ“分母（人口など）”に依存している可能性がある（共通分母による相関）")
-    if np.isfinite(r_all) and np.isfinite(r_in) and (abs(r_all) - abs(r_in) >= 0.15):
-        pseudo_flags.append("外れ値が相関を強く見せていた可能性")
-
-    # 因果の向きの“仮説”
-    cause_hint = None
-    if has_any(la, CAUSE_LIKE) and has_any(lb, EFFECT_LIKE):
-        cause_hint = f"『{label_a} → {label_b}』の因果がありそう（仮説）"
-    elif has_any(lb, CAUSE_LIKE) and has_any(la, EFFECT_LIKE):
-        cause_hint = f"『{label_b} → {label_a}』の因果がありそう（仮説）"
-
-    # 総合判定
-    if not corr_exists:
-        relation = "相関はほぼない（関係は弱い）"
-        reason = "相関係数が小さく、順位相関（スピアマン）も弱めだからです。"
-    else:
-        if pseudo_flags:
-            relation = "疑似相関の可能性が高い"
-            reason = "・" + "\n・".join(pseudo_flags)
-        elif cause_hint:
-            relation = "相関あり（因果の可能性を示唆：仮説）"
-            reason = cause_hint
+        # 総合判定
+        if not corr_exists:
+            relation = "相関はほぼない（関係は弱い）"
+            reason = "相関係数が小さく、順位相関（スピアマン）も弱めだからです。"
         else:
-            relation = "相関あり（因果は不明）"
-            reason = "相関は確認できるが、原因と結果はこのデータだけでは判定できません。"
+            if pseudo_flags:
+                relation = "疑似相関の可能性が高い"
+                reason = "・" + "\n・".join(pseudo_flags)
+            elif cause_hint:
+                relation = "相関あり（因果の可能性を示唆：仮説）"
+                reason = cause_hint
+            else:
+                relation = "相関あり（因果は不明）"
+                reason = "相関は確認できるが、原因と結果はこのデータだけでは判定できません。"
 
-    st.subheader("AI分析")
-    st.markdown(f"""
+        st.subheader("AI分析")
+        st.markdown(f"""
 **総合判定:** **{relation}**
 
 **根拠（数値）**
@@ -460,12 +458,17 @@ if st.session_state.show_ai:
 - 外れ値件数: X軸 **{len(outs_x)}件** ／ Y軸 **{len(outs_y)}件**
 """)
 
-    st.info("**解釈ガイド（高校生向け）**\n"
-            "- 相関は“いっしょに増減する傾向”で、**原因と結果そのものではありません**。\n"
-            "- **疑似相関**は、人口など**共通の要因**が両方に効いて“関係があるように見える”状態です。\n"
-            "- 因果を確かめるには、時系列・介入前後比較・他の要因をそろえた比較など**追加の検証**が必要です。")
+        st.info("**解釈ガイド（高校生向け）**\n"
+                "- 相関は“いっしょに増減する傾向”で、**原因と結果そのものではありません**。\n"
+                "- **疑似相関**は、人口など**共通の要因**が両方に効いて“関係があるように見える”状態です。\n"
+                "- 因果を確かめるには、時系列・介入前後比較・他の要因をそろえた比較など**追加の検証**が必要です。")
 
-    st.markdown("**判定理由（要約）**\n\n" + reason)
-# ===== ここまで AI分析 =====
+        st.markdown("**判定理由（要約）**\n\n" + reason)
+    # ===== ここまで AI分析 =====
 
-
+    # 外れ値の定義（IQR法）
+    st.markdown(
+        "#### 外れ値の定義（IQR法）\n"
+        "四分位範囲 IQR = Q3 − Q1 とし、**下限 = Q1 − 1.5×IQR、上限 = Q3 + 1.5×IQR** を超える値を外れ値とします。"
+        " 本ツールでは、散布図の「外れ値除外」では **x または y のどちらかが外れ値** に該当した都道府県を除いています。"
+    )
