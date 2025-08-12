@@ -6,6 +6,7 @@
 # ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮／タイトル余白修正
 # ・AI分析（計算結果をSessionに保存→ボタン外置き）
 # ・「クリア」ボタンで2つのURLと計算結果をリセット（on_click方式）
+# ・結合後データのCSV保存ボタンを追加／外れ値CSV保存ボタンは削除
 
 import io
 import re
@@ -379,6 +380,14 @@ if do_calc:
     st.subheader("結合後のデータ（共通の都道府県のみ）")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+    # ★ 追加：結合後データをCSV保存
+    st.download_button(
+        "結合後のデータをCSVで保存",
+        display_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="merged_pref_data.csv",
+        mime="text/csv"
+    )
+
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。")
         st.session_state.calc = None
@@ -407,7 +416,7 @@ if do_calc:
     with col_r:
         draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
 
-    # 外れ値リスト
+    # 外れ値リスト（表示のみ）
     outs_x = pref_all[~mask_x_in]
     outs_y = pref_all[~mask_y_in]
 
@@ -420,19 +429,7 @@ if do_calc:
         st.markdown("**Y軸で外れ値**")
         st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
 
-    # CSV保存
-    out_df = pd.DataFrame({
-        "都道府県": pref_all,
-        "X外れ値": ~mask_x_in,
-        "Y外れ値": ~mask_y_in,
-        "除外対象": ~(mask_x_in & mask_y_in),
-    })
-    st.download_button(
-        "外れ値リストをCSVで保存",
-        out_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="outliers.csv",
-        mime="text/csv"
-    )
+    # ★ 外れ値CSV保存ボタンは削除しました
 
     st.markdown("---")
 
@@ -533,7 +530,7 @@ if do_ai and not ai_disabled:
         "- 因果を確かめるには、時系列の比較や条件をそろえた検証など、**追加の分析**が必要です。"
     )
 
-    # ======== ここから：一番下に表示する補足（IQR法 と スピアマン順位相関の説明＋例）========
+    # ======== 最下部の補足（IQR法 と スピアマン順位相関の説明＋例）========
     st.markdown("---")
     st.markdown(
         "#### 外れ値の定義（IQR法）\n"
