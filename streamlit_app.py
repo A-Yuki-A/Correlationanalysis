@@ -452,13 +452,13 @@ if st.button("相関を計算・表示する", type="primary"):
 
 **根拠（数値）**
 - サンプル数: 全データ **n={len(x_all)}** ／ 外れ値除外 **n={len(x_in)}**
-- ピアソン相関: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
+- 相関係数: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
 - 決定係数: 全データ **r²={r2_all if np.isfinite(r2_all) else float('nan'):.3f}** ／ 外れ値除外 **r²={r2_in if np.isfinite(r2_in) else float('nan'):.3f}**
 - スピアマン順位相関（全データ）: **ρ={rho_all if np.isfinite(rho_all) else float('nan'):.3f}**
 - 外れ値件数: X軸 **{len(outs_x)}件** ／ Y軸 **{len(outs_y)}件**
 """)
 
-        st.info("**解釈ガイド（高校生向け）**\n"
+        st.info("**この結果からわかること**\n"
                 "- 相関は“いっしょに増減する傾向”で、**原因と結果そのものではありません**。\n"
                 "- **疑似相関**は、人口など**共通の要因**が両方に効いて“関係があるように見える”状態です。\n"
                 "- 因果を確かめるには、時系列・介入前後比較・他の要因をそろえた比較など**追加の検証**が必要です。")
