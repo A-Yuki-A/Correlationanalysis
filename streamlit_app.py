@@ -7,6 +7,7 @@
 # ・結果分析（計算結果をSessionに保存→ボタン外置き）
 # ・「クリア」ボタンで2つのURLと計算結果をリセット（on_click方式）
 # ・結合後データのCSV保存ボタンを追加／外れ値CSV保存ボタンは削除
+# ・結果分析ボタンを押しても散布図・結合表が消えないよう永続表示
 
 import io
 import re
@@ -119,6 +120,11 @@ if "url_a" not in st.session_state:
     st.session_state["url_a"] = ""
 if "url_b" not in st.session_state:
     st.session_state["url_b"] = ""
+# 表示用の永続データ
+if "display_df" not in st.session_state:
+    st.session_state["display_df"] = None
+if "calc" not in st.session_state:
+    st.session_state["calc"] = None
 
 # -------------------- ユーティリティ --------------------
 def show_fig(fig, width_px: int):
@@ -346,7 +352,8 @@ allow_rate = st.checkbox("割合（率・％・当たり）も対象にする", 
 def clear_urls():
     st.session_state["url_a"] = ""
     st.session_state["url_b"] = ""
-    st.session_state.pop("calc", None)
+    st.session_state["display_df"] = None
+    st.session_state["calc"] = None
     st.rerun()
 
 col_calc, col_clear = st.columns([2, 1])
@@ -377,20 +384,11 @@ if do_calc:
     )
 
     display_df = df.rename(columns={"value_a": label_a, "value_b": label_b})
-    st.subheader("結合後のデータ（共通の都道府県のみ）")
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-    # ★ 追加：結合後データをCSV保存
-    st.download_button(
-        "結合後のデータをCSVで保存",
-        display_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="merged_pref_data.csv",
-        mime="text/csv"
-    )
+    st.session_state["display_df"] = display_df  # 永続化
 
     if len(df) < 3:
         st.warning("共通データが少ないため、相関係数が不安定です。")
-        st.session_state.calc = None
+        st.session_state["calc"] = None
         st.stop()
 
     # 数値化と欠損除去
@@ -408,17 +406,43 @@ if do_calc:
     x_in = x_all[mask_inlier]
     y_in = y_all[mask_inlier]
 
-    # 散布図（左右）
+    # 外れ値リスト（表示のみ）
+    outs_x = pref_all[~mask_x_in]
+    outs_y = pref_all[~mask_y_in]
+
+    # 計算結果一式を永続化（分析・再描画用）
+    st.session_state["calc"] = {
+        "x_all": x_all, "y_all": y_all, "x_in": x_in, "y_in": y_in,
+        "outs_x": outs_x, "outs_y": outs_y,
+        "label_a": label_a, "label_b": label_b
+    }
+
+# -------------------- 常に表示（セッションに残っていれば） --------------------
+if st.session_state.get("display_df") is not None:
+    st.subheader("結合後のデータ（共通の都道府県のみ）")
+    st.dataframe(st.session_state["display_df"], use_container_width=True, hide_index=True)
+
+    # 結合後データをCSV保存
+    st.download_button(
+        "結合後のデータをCSVで保存",
+        st.session_state["display_df"].to_csv(index=False).encode("utf-8-sig"),
+        file_name="merged_pref_data.csv",
+        mime="text/csv"
+    )
+
+if st.session_state.get("calc") is not None:
+    c = st.session_state["calc"]
+    x_all, y_all = c["x_all"], c["y_all"]
+    x_in, y_in = c["x_in"], c["y_in"]
+    label_a, label_b = c["label_a"], c["label_b"]
+    outs_x, outs_y = c["outs_x"], c["outs_y"]
+
     st.subheader("散布図（左：外れ値を含む／右：外れ値除外）")
     col_l, col_r = st.columns(2)
     with col_l:
         draw_scatter_reg_with_metrics(x_all, y_all, label_a, label_b, "散布図（外れ値を含む）", SCATTER_WIDTH_PX)
     with col_r:
         draw_scatter_reg_with_metrics(x_in, y_in, label_a, label_b, "散布図（外れ値除外）", SCATTER_WIDTH_PX)
-
-    # 外れ値リスト（表示のみ）
-    outs_x = pref_all[~mask_x_in]
-    outs_y = pref_all[~mask_y_in]
 
     st.subheader("外れ値（都道府県名）")
     col_x, col_y = st.columns(2)
@@ -429,23 +453,14 @@ if do_calc:
         st.markdown("**Y軸で外れ値**")
         st.write("\n".join(map(str, outs_y)) if len(outs_y) else "なし")
 
-    # ★ 外れ値CSV保存ボタンは削除しました
-
     st.markdown("---")
 
-    # ===== 計算結果を session_state に保存（結果分析用）=====
-    st.session_state.calc = {
-        "x_all": x_all, "y_all": y_all, "x_in": x_in, "y_in": y_in,
-        "outs_x": outs_x, "outs_y": outs_y,
-        "label_a": label_a, "label_b": label_b
-    }
-
 # -------------------- 結果分析（独立ボタン：常に画面下に表示） --------------------
-ai_disabled = ("calc" not in st.session_state) or (st.session_state.get("calc") is None)
+ai_disabled = (st.session_state.get("calc") is None)
 do_ai = st.button("結果分析", key="btn_ai", disabled=ai_disabled)
 
 if do_ai and not ai_disabled:
-    c = st.session_state.calc
+    c = st.session_state["calc"]
     x_all = c["x_all"]; y_all = c["y_all"]; x_in = c["x_in"]; y_in = c["y_in"]
     outs_x = c["outs_x"]; outs_y = c["outs_y"]
     label_a = c["label_a"]; label_b = c["label_b"]
@@ -530,7 +545,7 @@ if do_ai and not ai_disabled:
         "- 因果を確かめるには、時系列の比較や条件をそろえた検証など、**追加の分析**が必要です。"
     )
 
-    # ======== 最下部の補足（IQR法 と スピアマン順位相関の説明＋例）========
+    # 補足（IQR法 と スピアマン順位相関の説明＋例）
     st.markdown("---")
     st.markdown(
         "#### 外れ値の定義（IQR法）\n"
