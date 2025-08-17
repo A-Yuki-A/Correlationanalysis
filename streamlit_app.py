@@ -4,7 +4,7 @@
 # ・「偏差値」や「順位」列は除外
 # ・外れ値は「X軸で外れ値」「Y軸で外れ値」のみ横並び2カラム表示
 # ・グレースケールデザイン／中央寄せ／アクセシビリティ配慮／タイトル余白修正
-# ・AI分析（計算結果をSessionに保存→ボタン外置き）
+# ・結果分析（計算結果をSessionに保存→ボタン外置き）
 # ・「クリア」ボタンで2つのURLと計算結果をリセット（on_click方式）
 # ・結合後データのCSV保存ボタンを追加／外れ値CSV保存ボタンは削除
 
@@ -221,7 +221,7 @@ def compose_label(caption, val_col, page_title):
             return str(s).strip()
     return "データ"
 
-# ===== 相関ユーティリティ（AI分析で使用） =====
+# ===== 相関ユーティリティ（結果使用） =====
 def strength_label(r: float) -> str:
     if r is None or not np.isfinite(r):
         return "判定不可"
@@ -433,16 +433,16 @@ if do_calc:
 
     st.markdown("---")
 
-    # ===== 計算結果を session_state に保存（AI分析用）=====
+    # ===== 計算結果を session_state に保存（結果分析用）=====
     st.session_state.calc = {
         "x_all": x_all, "y_all": y_all, "x_in": x_in, "y_in": y_in,
         "outs_x": outs_x, "outs_y": outs_y,
         "label_a": label_a, "label_b": label_b
     }
 
-# -------------------- AI分析（独立ボタン：常に画面下に表示） --------------------
+# -------------------- 結果分析（独立ボタン：常に画面下に表示） --------------------
 ai_disabled = ("calc" not in st.session_state) or (st.session_state.get("calc") is None)
-do_ai = st.button("AI分析", key="btn_ai", disabled=ai_disabled)
+do_ai = st.button("結果分析", key="btn_ai", disabled=ai_disabled)
 
 if do_ai and not ai_disabled:
     c = st.session_state.calc
@@ -514,7 +514,7 @@ if do_ai and not ai_disabled:
     st.markdown("**理由（要約）**\n\n" + reason)
 
     # 以下、数値の内訳
-    st.subheader("AI分析")
+    st.subheader("結果分析")
     st.markdown(f"""
 - サンプル数: 全データ **n={len(x_all)}** ／ 外れ値除外 **n={len(x_in)}**
 - 相関係数: 全データ **r={r_all if np.isfinite(r_all) else float('nan'):.3f}（{strength_label(r_all)}）** ／ 外れ値除外 **r={r_in if np.isfinite(r_in) else float('nan'):.3f}（{strength_label(r_in)}）**
