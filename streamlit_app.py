@@ -1,7 +1,8 @@
 # streamlit_app.py
-# CorrGraph：とどランURL×2 → 都道府県データ抽出と相関分析（外れ値あり／なし散布図）
-# - 結合後データの下に「外れ値を含む散布図＋箱ひげ図（左・下）」を表示
-# - Y軸ラベルは箱ひげ図（左）に表示／散布図側のY目盛は非表示（重複回避）
+# CorrGraph：とどランURL×2 → 都道府県データ抽出と相関分析
+# - 結合後データの下に「散布図＋箱ひげ図（外れ値を含む）」と
+#   その下に「散布図＋箱ひげ図（外れ値除外）」を表示
+# - Y軸ラベル＆目盛は箱ひげ図（左）に集約、散布図側は非表示
 
 import io
 import re
@@ -167,7 +168,7 @@ def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px):
     ax_main.set_xlabel(la)
     ax_main.set_title(title)
     # Y軸の目盛・ラベルは散布図側を消す（重複回避）
-    ax_main.set_ylabel("")               # ラベル消す
+    ax_main.set_ylabel("")
     ax_main.tick_params(axis="y", which="both", left=False, labelleft=False)
 
     # 箱ひげ：下（X）
@@ -180,7 +181,7 @@ def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px):
     # 箱ひげ：左（Y）※共有Y軸なので目盛はここにだけ表示
     ax_box_y.boxplot(y, vert=True, widths=0.6)
     ax_box_y.xaxis.set_visible(False)
-    ax_box_y.set_ylabel(lb)             # ← Y軸ラベルは箱ひげ側に集約
+    ax_box_y.set_ylabel(lb)  # ← Y軸ラベルは箱ひげ側に集約
 
     show_fig(fig, width_px)
 
@@ -207,7 +208,7 @@ def safe_spearman(x, y):
 # -------------------- URL読み込み --------------------
 @st.cache_data(show_spinner=False)
 def load_todoran_table(url: str, allow_rate: bool = True):
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
     html = r.text
@@ -366,14 +367,15 @@ if do_calc:
 
     st.session_state["display_df"] = df.rename(columns={"value_a":label_a,"value_b":label_b})
 
+    # 数値化＆外れ値判定
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
 
-    mask_x_in = iqr_mask(x_all)
-    mask_y_in = iqr_mask(y_all)
+    mask_x_in = iqr_mask(x_all, 1.5)
+    mask_y_in = iqr_mask(y_all, 1.5)
     mask_in = mask_x_in & mask_y_in
 
     st.session_state["calc"] = {
@@ -391,7 +393,7 @@ if st.session_state.get("display_df") is not None:
         file_name="merged_pref_data.csv", mime="text/csv"
     )
 
-    # 外れ値を含む散布図＋箱ひげ図（Y軸は箱ひげ側のみ表示）
+    # 1) 外れ値を含む散布図＋箱ひげ図
     if st.session_state.get("calc") is not None:
         c = st.session_state["calc"]
         draw_scatter_with_marginal_boxplots(
@@ -399,4 +401,11 @@ if st.session_state.get("display_df") is not None:
             "散布図＋箱ひげ図（外れ値を含む）", width_px=720
         )
 
-# 以降、相関係数の詳細や外れ値一覧などは必要に応じて下に追加可能
+        # 2) 外れ値除外の散布図＋箱ひげ図（← 追加表示）
+        if len(c["x_in"]) >= 2 and len(c["y_in"]) >= 2:
+            draw_scatter_with_marginal_boxplots(
+                c["x_in"], c["y_in"], c["label_a"], c["label_b"],
+                "散布図＋箱ひげ図（外れ値除外）", width_px=720
+            )
+        else:
+            st.info("外れ値除外後のデータ数が少ないため、除外版の図は省略しました。")
