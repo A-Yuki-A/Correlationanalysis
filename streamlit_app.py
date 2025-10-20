@@ -3,6 +3,7 @@
 # - 結合後データの下に「散布図＋箱ひげ図（外れ値を含む）」と
 #   その下に「散布図＋箱ひげ図（外れ値除外）」を表示
 # - Y軸ラベル＆目盛は箱ひげ図（左）に集約、散布図側は非表示
+# - 一番下に「外れ値として扱った都道府県の一覧」と「外れ値の定義（IQR法）」を追加
 
 import io
 import re
@@ -315,97 +316,4 @@ def load_todoran_table(url: str, allow_rate: bool = True):
 
         return None, None
 
-    page_h1 = soup.find("h1").get_text(strip=True) if soup.find("h1") else None
-    page_title = soup.title.get_text(strip=True) if soup.title else None
-    for idx, raw in enumerate(tables):
-        got, val_col = pick_value_dataframe(raw)
-        if got is not None:
-            caption_text = None
-            if idx < len(bs_tables):
-                cap = bs_tables[idx].find("caption")
-                if cap: caption_text = cap.get_text(strip=True)
-            label = compose_label(caption_text, val_col, page_h1 or page_title)
-            return got, label
-    return pd.DataFrame(columns=["pref","value"]), "データ"
-
-# -------------------- UI --------------------
-url_a = st.text_input("X軸URL（説明変数）", placeholder="https://todo-ran.com/t/kiji/XXXXX", key="url_a")
-url_b = st.text_input("Y軸URL（目的変数）", placeholder="https://todo-ran.com/t/kiji/YYYYY", key="url_b")
-allow_rate = st.checkbox("割合（％・〜当たり）を含める", value=True)
-
-def clear_urls():
-    for key in ["url_a","url_b","display_df","calc"]:
-        st.session_state[key] = "" if "url" in key else None
-    st.rerun()
-
-col1, col2 = st.columns([2,1])
-with col1:
-    do_calc = st.button("相関を計算・表示する", type="primary")
-with col2:
-    st.button("クリア", on_click=clear_urls)
-
-# -------------------- 計算 --------------------
-if do_calc:
-    if not url_a or not url_b:
-        st.error("2つのURLを入力してください。")
-        st.stop()
-    try:
-        df_a, label_a = load_todoran_table(url_a, allow_rate)
-        df_b, label_b = load_todoran_table(url_b, allow_rate)
-    except requests.RequestException as e:
-        st.error(f"ページの取得に失敗しました：{e}")
-        st.stop()
-    if df_a.empty or df_b.empty:
-        st.error("表の抽出に失敗しました。")
-        st.stop()
-
-    df = pd.merge(
-        df_a.rename(columns={"value":"value_a"}),
-        df_b.rename(columns={"value":"value_b"}),
-        on="pref", how="inner"
-    )
-
-    st.session_state["display_df"] = df.rename(columns={"value_a":label_a,"value_b":label_b})
-
-    # 数値化＆外れ値判定
-    x0 = pd.to_numeric(df["value_a"], errors="coerce")
-    y0 = pd.to_numeric(df["value_b"], errors="coerce")
-    mask0 = x0.notna() & y0.notna()
-    x_all = x0[mask0].to_numpy()
-    y_all = y0[mask0].to_numpy()
-
-    mask_x_in = iqr_mask(x_all, 1.5)
-    mask_y_in = iqr_mask(y_all, 1.5)
-    mask_in = mask_x_in & mask_y_in
-
-    st.session_state["calc"] = {
-        "x_all": x_all, "y_all": y_all,
-        "x_in": x_all[mask_in], "y_in": y_all[mask_in],
-        "label_a": label_a, "label_b": label_b
-    }
-
-# -------------------- 表示 --------------------
-if st.session_state.get("display_df") is not None:
-    st.subheader("結合後のデータ（共通の都道府県のみ）")
-    st.dataframe(st.session_state["display_df"], use_container_width=True, hide_index=True)
-    st.download_button("CSVで保存",
-        st.session_state["display_df"].to_csv(index=False).encode("utf-8-sig"),
-        file_name="merged_pref_data.csv", mime="text/csv"
-    )
-
-    # 1) 外れ値を含む散布図＋箱ひげ図
-    if st.session_state.get("calc") is not None:
-        c = st.session_state["calc"]
-        draw_scatter_with_marginal_boxplots(
-            c["x_all"], c["y_all"], c["label_a"], c["label_b"],
-            "散布図＋箱ひげ図（外れ値を含む）", width_px=720
-        )
-
-        # 2) 外れ値除外の散布図＋箱ひげ図（← 追加表示）
-        if len(c["x_in"]) >= 2 and len(c["y_in"]) >= 2:
-            draw_scatter_with_marginal_boxplots(
-                c["x_in"], c["y_in"], c["label_a"], c["label_b"],
-                "散布図＋箱ひげ図（外れ値除外）", width_px=720
-            )
-        else:
-            st.info("外れ値除外後のデータ数が少ないため、除外版の図は省略しました。")
+    page_h1 = soup.find("h1").get_text(strip=True) if soup.find("h1
