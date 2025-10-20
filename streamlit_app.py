@@ -432,28 +432,53 @@ if st.session_state.get("display_df") is not None:
         else:
             st.info("外れ値除外後のデータ数が少ないため、除外版の図は省略しました。")
 
-        # ---- 一番下：外れ値一覧と外れ値の定義（IQR） ----
-        st.markdown("---")
-        st.subheader("外れ値として処理した都道府県（一覧）")
+       # ---- 一番下：外れ値一覧と外れ値の定義（IQR） ----
+st.markdown("---")
+st.subheader("外れ値として処理した都道府県（一覧）")
 
-        colx, coly = st.columns(2)
-        with colx:
-            st.markdown("**X軸で外れ値**")
-            st.write("\n".join(map(str, c["outs_x"])) if len(c["outs_x"]) else "なし")
-        with coly:
-            st.markdown("**Y軸で外れ値**")
-            st.write("\n".join(map(str, c["outs_y"])) if len(c["outs_y"]) else "なし")
+colx, coly = st.columns(2)
+with colx:
+    st.markdown("**X軸で外れ値**")
+    st.write("\n".join(map(str, c["outs_x"])) if len(c["outs_x"]) else "なし")
+with coly:
+    st.markdown("**Y軸で外れ値**")
+    st.write("\n".join(map(str, c["outs_y"])) if len(c["outs_y"]) else "なし")
 
-        # 参考：IQRの境界値も併記（希望に合わせて）
-        xi = c["iqr_info"]["x"]; yi = c["iqr_info"]["y"]
-        st.caption(
-            f"X軸 IQR基準: Q1={xi['Q1']:.3f}, Q3={xi['Q3']:.3f}, IQR={xi['IQR']:.3f}, 下限={xi['LOW']:.3f}, 上限={xi['HIGH']:.3f} / "
-            f"Y軸 IQR基準: Q1={yi['Q1']:.3f}, Q3={yi['Q3']:.3f}, IQR={yi['IQR']:.3f}, 下限={yi['LOW']:.3f}, 上限={yi['HIGH']:.3f}"
-        )
+# ▼▼▼ ここから安全化：iqr_info が無い場合は再計算 ▼▼▼
+iqr_info = c.get("iqr_info")
 
-        st.markdown("#### 外れ値の定義（IQR法）")
-        st.markdown(
-            "- 四分位範囲（**IQR**）を **IQR = Q3 − Q1** とします。  \n"
-            "- **下限 = Q1 − 1.5×IQR**, **上限 = Q3 + 1.5×IQR** を超えるデータを**外れ値**と判定しました。  \n"
-            "- 本ツールでは、X軸またはY軸の**どちらか一方でも外れ値になった都道府県**を、外れ値として除外しています。"
-        )
+def _iqr_bounds(arr: np.ndarray):
+    if arr is None or len(arr) == 0:
+        return (np.nan, np.nan, np.nan, np.nan, np.nan)
+    q1 = float(np.nanpercentile(arr, 25))
+    q3 = float(np.nanpercentile(arr, 75))
+    iqr = q3 - q1
+    low = q1 - 1.5 * iqr
+    high = q3 + 1.5 * iqr
+    return (q1, q3, iqr, low, high)
+
+if not iqr_info:
+    q1x, q3x, iqrx, lox, hix = _iqr_bounds(c["x_all"])
+    q1y, q3y, iqry, loy, hiy = _iqr_bounds(c["y_all"])
+    xi = {"Q1": q1x, "Q3": q3x, "IQR": iqrx, "LOW": lox, "HIGH": hix}
+    yi = {"Q1": q1y, "Q3": q3y, "IQR": iqry, "LOW": loy, "HIGH": hiy}
+else:
+    xi = iqr_info.get("x", {})
+    yi = iqr_info.get("y", {})
+
+# fmt() はあなたのコードに既にある補助関数（None/NaN安全）
+st.caption(
+    "X軸 IQR基準: "
+    f"Q1={fmt(xi.get('Q1'))}, Q3={fmt(xi.get('Q3'))}, IQR={fmt(xi.get('IQR'))}, "
+    f"下限={fmt(xi.get('LOW'))}, 上限={fmt(xi.get('HIGH'))} / "
+    "Y軸 IQR基準: "
+    f"Q1={fmt(yi.get('Q1'))}, Q3={fmt(yi.get('Q3'))}, IQR={fmt(yi.get('IQR'))}, "
+    f"下限={fmt(yi.get('LOW'))}, 上限={fmt(yi.get('HIGH'))}"
+)
+
+st.markdown("#### 外れ値の定義（IQR法）")
+st.markdown(
+    "- 四分位範囲（**IQR**）を **IQR = Q3 − Q1** とします。  \n"
+    "- **下限 = Q1 − 1.5×IQR**, **上限 = Q3 + 1.5×IQR** を超えるデータを**外れ値**と判定しました。  \n"
+    "- 本ツールでは、X軸またはY軸の**どちらか一方でも外れ値**になった都道府県を、外れ値として除外しています。"
+)
