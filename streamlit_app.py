@@ -8,6 +8,7 @@
 # ・「クリア」ボタンで2つのURLと計算結果をリセット（on_click方式）
 # ・結合後データのCSV保存ボタンを追加／外れ値CSV保存ボタンは削除
 # ・結果分析ボタンを押しても散布図・結合表が消えないよう永続表示
+# ・結合表の直下に「外れ値を含む散布図＋周辺箱ひげ図（左・下）」を追加
 
 import io
 import re
@@ -248,6 +249,63 @@ def safe_spearman(x, y):
     yr = pd.Series(y).rank(method="average").to_numpy()
     return safe_pearson(xr, yr)
 
+# === 追加：散布図＋周辺箱ひげ図（外れ値含む） ===
+def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px):
+    # NaNや無限大を除去
+    ok = np.isfinite(x) & np.isfinite(y)
+    x = np.asarray(x)[ok]
+    y = np.asarray(y)[ok]
+    if x.size == 0 or y.size == 0:
+        st.warning("描画できるデータがありません。")
+        return
+
+    import matplotlib.gridspec as gridspec
+
+    # レイアウト（左：Y箱ひげ／右上：散布図／右下：X箱ひげ）
+    fig = plt.figure(figsize=(BASE_W_INCH * 1.2, BASE_H_INCH * 1.2))
+    gs  = gridspec.GridSpec(
+        2, 2,
+        width_ratios=[1.0, 4.0],
+        height_ratios=[4.0, 1.0],
+        wspace=0.05, hspace=0.05
+    )
+
+    ax_box_y  = fig.add_subplot(gs[0, 0])  # 左（Y箱ひげ）
+    ax_main   = fig.add_subplot(gs[0, 1])  # 右上（散布図）
+    ax_box_x  = fig.add_subplot(gs[1, 1])  # 右下（X箱ひげ）
+    ax_empty  = fig.add_subplot(gs[1, 0])  # 左下（空欄）
+    ax_empty.axis("off")
+
+    # 散布図
+    ax_main.scatter(x, y, s=DEFAULT_MARKER_SIZE)
+    ax_main.set_xlabel(la if str(la).strip() else "横軸")
+    ax_main.set_ylabel(lb if str(lb).strip() else "縦軸")
+    ax_main.set_title(title if str(title).strip() else "散布図")
+
+    # 軸範囲を取得してから箱ひげを描く
+    xlim = ax_main.get_xlim()
+    ylim = ax_main.get_ylim()
+
+    # 下：Xの箱ひげ（横）
+    ax_box_x.boxplot(x, vert=False, widths=0.6, manage_ticks=False)
+    ax_box_x.set_xlim(xlim)
+    ax_box_x.set_xlabel(la if str(la).strip() else "横軸")
+
+    # 左：Yの箱ひげ（縦）
+    ax_box_y.boxplot(y, vert=True, widths=0.6, manage_ticks=False)
+    ax_box_y.set_ylim(ylim)
+    ax_box_y.set_ylabel(lb if str(lb).strip() else "縦軸")
+
+    # 余計な目盛り・枠を控えめに
+    ax_box_y.xaxis.set_visible(False)
+    ax_box_x.yaxis.set_visible(False)
+    for spine in ["top", "right"]:
+        ax_main.spines[spine].set_visible(False)
+        ax_box_x.spines[spine].set_visible(False)
+        ax_box_y.spines[spine].set_visible(False)
+
+    show_fig(fig, width_px)
+
 # -------------------- URL読み込み --------------------
 @st.cache_data(show_spinner=False)
 def load_todoran_table(url: str, allow_rate: bool = True):
@@ -430,6 +488,16 @@ if st.session_state.get("display_df") is not None:
         mime="text/csv"
     )
 
+    # ★追加：外れ値を含めた散布図＋箱ひげ図（左・下）
+    if st.session_state.get("calc") is not None:
+        c = st.session_state["calc"]
+        draw_scatter_with_marginal_boxplots(
+            c["x_all"], c["y_all"],
+            c["label_a"], c["label_b"],
+            "散布図＋箱ひげ図（外れ値を含む）",
+            width_px=720
+        )
+
 if st.session_state.get("calc") is not None:
     c = st.session_state["calc"]
     x_all, y_all = c["x_all"], c["y_all"]
@@ -515,7 +583,8 @@ if do_ai and not ai_disabled:
         reason = "相関係数が小さく、順位相関も弱めです。"
     else:
         if pseudo_flags:
-            relation = "相関は確認できますが、疑似相関の可能性が高いです。"
+            relation = "相関は確認できますが、疑似相関の可能性が高いです。
+"
             reason = "・" + "\n・".join(pseudo_flags)
         elif cause_hint:
             relation = "相関があり、因果の可能性も示唆されます（仮説）。"
