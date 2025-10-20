@@ -1,7 +1,7 @@
 # streamlit_app.py
 # CorrGraph：とどランURL×2 → 都道府県データ抽出と相関分析
-# - 外れ値を含む散布図では外れ値だけ青で表示
-# - 外れ値除外散布図も下に表示
+# - 外れ値を含む散布図では外れ値だけ青で表示＋回帰直線＆相関係数表示
+# - 外れ値除外散布図も下に表示（同様に回帰直線＆相関係数表示）
 # - 最下部に外れ値一覧とIQR定義を表示
 
 import io
@@ -134,8 +134,11 @@ def fmt(v) -> str:
     except Exception:
         return "-"
 
-# === 散布図＋周辺箱ひげ図（外れ値は青） ===
-def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None):
+# === 散布図＋周辺箱ひげ図（回帰直線＆相関係数付き、外れ値は青） ===
+def draw_scatter_with_marginal_boxplots(
+    x, y, la, lb, title, width_px,
+    outs_x=None, outs_y=None, pref_all=None
+):
     ok = np.isfinite(x) & np.isfinite(y)
     x = np.asarray(x)[ok]; y = np.asarray(y)[ok]
     if x.size == 0 or y.size == 0:
@@ -151,22 +154,47 @@ def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px, outs_x=No
     ax_box_x = fig.add_subplot(gs[1,1])
     ax_empty = fig.add_subplot(gs[1,0]); ax_empty.axis("off")
 
-    # 外れ値を青に（pref_allの整合性に注意）
+    # --- 散布図（外れ値だけ青） ---
+    handles = []
+    labels = []
     if outs_x is not None and outs_y is not None and pref_all is not None:
-        pref_all = np.asarray(pref_all)[ok]  # x,yのNaN除外と揃える
-        out_mask = np.array([(p in set(outs_x)) or (p in set(outs_y)) for p in pref_all])
+        pref_all = np.asarray(pref_all)[ok]  # x,yのNaN除外と整合
+        out_set_x = set(list(outs_x))
+        out_set_y = set(list(outs_y))
+        out_mask = np.array([(p in out_set_x) or (p in out_set_y) for p in pref_all])
         in_mask = ~out_mask
-        ax_main.scatter(x[in_mask], y[in_mask], color="gray", s=DEFAULT_MARKER_SIZE, label="通常データ")
-        ax_main.scatter(x[out_mask], y[out_mask], color="blue", s=DEFAULT_MARKER_SIZE, label="外れ値")
-        ax_main.legend(frameon=False, loc="best")
+        h1 = ax_main.scatter(x[in_mask], y[in_mask], color="gray", s=DEFAULT_MARKER_SIZE, label="通常データ")
+        h2 = ax_main.scatter(x[out_mask], y[out_mask], color="blue", s=DEFAULT_MARKER_SIZE, label="外れ値")
+        handles.extend([h1, h2]); labels.extend(["通常データ", "外れ値"])
     else:
-        ax_main.scatter(x, y, s=DEFAULT_MARKER_SIZE)
+        h = ax_main.scatter(x, y, s=DEFAULT_MARKER_SIZE, label="データ")
+        handles.append(h); labels.append("データ")
 
+    # --- 回帰直線＆相関係数 ---
+    # 分散が0だと計算できないのでチェック
+    r = np.nan
+    if len(x) >= 2 and np.nanstd(x) > 0 and np.nanstd(y) > 0:
+        # 回帰直線
+        slope, intercept = np.polyfit(x, y, 1)
+        xs = np.linspace(x.min(), x.max(), 200)
+        line = ax_main.plot(xs, slope*xs + intercept, linewidth=DEFAULT_LINE_WIDTH, label="回帰直線")
+        # r と r^2
+        r = float(np.corrcoef(x, y)[0, 1])
+        r2 = r**2
+        handles.append(line[0]); labels.append("回帰直線")
+        # 凡例タイトルに数値を表示
+        ax_main.legend(handles=handles, labels=labels, frameon=False, loc="best",
+                       title=f"相関係数 r={r:.3f}／r²={r2:.3f}")
+    else:
+        ax_main.legend(handles=handles, labels=labels, frameon=False, loc="best")
+
+    # 軸まわり
     ax_main.set_xlabel(la)
     ax_main.set_title(title)
-    ax_main.set_ylabel("")
+    ax_main.set_ylabel("")  # Yラベルは箱ひげ側のみ
     ax_main.tick_params(axis="y", which="both", left=False, labelleft=False)
 
+    # --- 周辺箱ひげ図 ---
     xlim = ax_main.get_xlim()
     ax_box_x.boxplot(x, vert=False, widths=0.6)
     ax_box_x.set_xlim(xlim)
@@ -360,14 +388,14 @@ if st.session_state.get("display_df") is not None:
     if st.session_state.get("calc") is not None:
         c = st.session_state["calc"]
 
-        # 1) 外れ値を含む散布図（外れ値は青）
+        # 1) 外れ値を含む散布図（外れ値は青）＋回帰直線＆相関係数
         draw_scatter_with_marginal_boxplots(
             c["x_all"], c["y_all"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値を含む）", width_px=720,
             outs_x=c["outs_x"], outs_y=c["outs_y"], pref_all=c["pref_all"]
         )
 
-        # 2) 外れ値除外の散布図（通常配色）
+        # 2) 外れ値除外の散布図（通常配色）＋回帰直線＆相関係数
         draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
