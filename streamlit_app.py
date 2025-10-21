@@ -471,22 +471,6 @@ st.download_button(
 )
 
 # IQR（箱ひげ）閾値も整形表示
-xi = c["iqr_info"]["x"]; yi = c["iqr_info"]["y"]
-st.markdown("#### 箱ひげ図の基準（IQR, whis=1.5）", help="箱ひげ図の『ひげ』の外に出た点を外れ値としています。")
-colx, coly = st.columns(2)
-with colx:
-    st.markdown(f"**X軸: {label_a}**")
-    st.markdown(
-        f"<div class='small'>Q1={fmt(xi['Q1'])} / Q3={fmt(xi['Q3'])} / IQR={fmt(xi['IQR'])}<br>"
-        f"下限={fmt(xi['LOW'])} / 上限={fmt(xi['HIGH'])}</div>", unsafe_allow_html=True
-    )
-with coly:
-    st.markdown(f"**Y軸: {label_b}**")
-    st.markdown(
-        f"<div class='small'>Q1={fmt(yi['Q1'])} / Q3={fmt(yi['Q3'])} / IQR={fmt(yi['IQR'])}<br>"
-        f"下限={fmt(yi['LOW'])} / 上限={fmt(yi['HIGH'])}</div>", unsafe_allow_html=True
-    )
-
 st.markdown("#### 外れ値の定義（IQR法、箱ひげ図と同じ）")
 st.markdown(
     "- 四分位範囲 **IQR = Q3 − Q1**。  \n"
