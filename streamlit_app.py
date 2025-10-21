@@ -401,31 +401,95 @@ if st.session_state.get("display_df") is not None:
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
         )
 
-        # --- 一番下：外れ値一覧＋IQR定義 ---
-        st.markdown("---")
-        st.subheader("外れ値として処理した都道府県（一覧）")
-        colx, coly = st.columns(2)
-        with colx:
-            st.markdown("**X軸で外れ値**")
-            st.write("\n".join(map(str, c["outs_x"])) if len(c["outs_x"]) else "なし")
-        with coly:
-            st.markdown("**Y軸で外れ値**")
-            st.write("\n".join(map(str, c["outs_y"])) if len(c["outs_y"]) else "なし")
+        # --- 一番下：外れ値一覧＋IQR定義（見やすく改良） ---
+st.markdown("---")
+st.subheader("外れ値として処理した都道府県（一覧）")
 
-        iqr_info = c.get("iqr_info", {})
-        xi = iqr_info.get("x", {}); yi = iqr_info.get("y", {})
-        st.caption(
-            "X軸 IQR基準: "
-            f"Q1={fmt(xi.get('Q1'))}, Q3={fmt(xi.get('Q3'))}, IQR={fmt(xi.get('IQR'))}, "
-            f"下限={fmt(xi.get('LOW'))}, 上限={fmt(xi.get('HIGH'))} / "
-            "Y軸 IQR基準: "
-            f"Q1={fmt(yi.get('Q1'))}, Q3={fmt(yi.get('Q3'))}, IQR={fmt(yi.get('IQR'))}, "
-            f"下限={fmt(yi.get('LOW'))}, 上限={fmt(yi.get('HIGH'))}"
-        )
+# ちょいCSS（バッジ風）
+st.markdown("""
+<style>
+.badge { display:inline-block; padding:.2rem .55rem; border-radius:9999px; 
+         border:1px solid #111; background:#fff; color:#111; margin-right:.35rem; }
+.badge.blue { background:#e7f0ff; border-color:#2b67f6; color:#1a3daa; }
+.badge.gray { background:#eee; color:#222; }
+.small { font-size:.9rem; color:#333; }
+</style>
+""", unsafe_allow_html=True)
 
-        st.markdown("#### 外れ値の定義（IQR法）")
-        st.markdown(
-            "- 四分位範囲（**IQR**）を **IQR = Q3 − Q1** とします。  \n"
-            "- **下限 = Q1 − 1.5×IQR**, **上限 = Q3 + 1.5×IQR** を超えるデータを**外れ値**と判定しました。  \n"
-            "- 本ツールでは、X軸またはY軸の**どちらか一方でも外れ値**になった都道府県を、外れ値として除外しています。"
-        )
+# セッションから取得
+c = st.session_state["calc"]
+label_a, label_b = c["label_a"], c["label_b"]
+pref_all = np.asarray(c["pref_all"], dtype=str)
+x_all = np.asarray(c["x_all"], dtype=float)
+y_all = np.asarray(c["y_all"], dtype=float)
+
+# どの都道府県が外れ値か（bool配列を pref_all の順で再構築）
+outs_x_set = set(map(str, c["outs_x"]))
+outs_y_set = set(map(str, c["outs_y"]))
+is_out_x = np.array([p in outs_x_set for p in pref_all])
+is_out_y = np.array([p in outs_y_set for p in pref_all])
+is_out_any = is_out_x | is_out_y
+
+# 外れ値だけの表をつくる
+out_df = pd.DataFrame({
+    "都道府県": pref_all[is_out_any],
+    "外れ軸": np.where(is_out_x[is_out_any] & is_out_y[is_out_any], "両方",
+             np.where(is_out_x[is_out_any], "X", "Y")),
+    f"X値（{label_a}）": x_all[is_out_any],
+    f"Y値（{label_b}）": y_all[is_out_any],
+    "Xで外れ": is_out_x[is_out_any],
+    "Yで外れ": is_out_y[is_out_any],
+})
+
+# 見やすく並べ替え（両方→X→Y、次に都道府県五十音）
+order_key = out_df["外れ軸"].map({"両方":0, "X":1, "Y":2})
+out_df = out_df.assign(_k=order_key).sort_values(["_k","都道府県"]).drop(columns="_k").reset_index(drop=True)
+
+# 数のバッジ
+n_x = int(is_out_x.sum())
+n_y = int(is_out_y.sum())
+n_both = int((is_out_x & is_out_y).sum())
+n_any = int(is_out_any.sum())
+st.markdown(
+    f'<span class="badge gray">総数 {n_any} 件</span>'
+    f'<span class="badge blue">X軸 {n_x} 件</span>'
+    f'<span class="badge blue">Y軸 {n_y} 件</span>'
+    f'<span class="badge gray">両方 {n_both} 件</span>',
+    unsafe_allow_html=True
+)
+
+# 表示とダウンロード
+st.dataframe(
+    out_df[[ "都道府県", "外れ軸", f"X値（{label_a}）", f"Y値（{label_b}）" ]],
+    use_container_width=True, hide_index=True
+)
+st.download_button(
+    "外れ値一覧をCSVで保存",
+    out_df.to_csv(index=False).encode("utf-8-sig"),
+    file_name="outliers_list.csv",
+    mime="text/csv"
+)
+
+# IQR（箱ひげ）閾値も整形表示
+xi = c["iqr_info"]["x"]; yi = c["iqr_info"]["y"]
+st.markdown("#### 箱ひげ図の基準（IQR, whis=1.5）", help="箱ひげ図の『ひげ』の外に出た点を外れ値としています。")
+colx, coly = st.columns(2)
+with colx:
+    st.markdown(f"**X軸: {label_a}**")
+    st.markdown(
+        f"<div class='small'>Q1={fmt(xi['Q1'])} / Q3={fmt(xi['Q3'])} / IQR={fmt(xi['IQR'])}<br>"
+        f"下限={fmt(xi['LOW'])} / 上限={fmt(xi['HIGH'])}</div>", unsafe_allow_html=True
+    )
+with coly:
+    st.markdown(f"**Y軸: {label_b}**")
+    st.markdown(
+        f"<div class='small'>Q1={fmt(yi['Q1'])} / Q3={fmt(yi['Q3'])} / IQR={fmt(yi['IQR'])}<br>"
+        f"下限={fmt(yi['LOW'])} / 上限={fmt(yi['HIGH'])}</div>", unsafe_allow_html=True
+    )
+
+st.markdown("#### 外れ値の定義（IQR法、箱ひげ図と同じ）")
+st.markdown(
+    "- 四分位範囲 **IQR = Q3 − Q1**。  \n"
+    "- **下限 = Q1 − 1.5×IQR**, **上限 = Q3 + 1.5×IQR** を超える点を外れ値と判定。  \n"
+    "- **XまたはYのどちらか一方でも外れていれば除外**しています。"
+)
