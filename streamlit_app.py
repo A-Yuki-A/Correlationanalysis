@@ -174,18 +174,18 @@ def draw_scatter_with_marginal_boxplots(x, y, la, lb, title, width_px, outs_x=No
                      bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
     # 軸（Yラベルは箱ひげ側）
-    ax_main.set_xlabel(la)
+    ax_main.set_xlabel(str(la).replace("降順","").replace("昇順",""))
     ax_main.set_ylabel("")
     ax_main.set_title(title)
     ax_main.tick_params(axis="y", which="both", left=False, labelleft=False)
 
     # 周辺箱ひげ（whis=1.5、余計なラベルは出さない）
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_x.set_xlabel(la)
+    ax_box_x.set_xlabel(str(la).replace("降順","").replace("昇順",""))
     ax_box_x.yaxis.set_visible(False)
 
     ax_box_y.boxplot(y, vert=True, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_y.set_ylabel(lb)
+    ax_box_y.set_ylabel(str(lb).replace("降順","").replace("昇順",""))
     ax_box_y.xaxis.set_visible(False)
 
     show_fig(fig, width_px)
