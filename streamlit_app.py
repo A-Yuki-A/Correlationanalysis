@@ -208,7 +208,7 @@ def draw_scatter_with_marginal_boxplots(
     ax_main.set_xlim(main_xlim)
     ax_main.set_ylim(main_ylim)
 
-    # 念のため、直線を最前面に（箱ひげ後に zorder が相対的に下がる環境対策）
+    # 念のため、直線を最前面に（箱ひげ後の順序影響対策）
     if drew_line:
         for line in ax_main.lines:
             line.set_zorder(4)
@@ -249,12 +249,13 @@ def load_todoran_table(url, allow_rate=True, debug=False):
             st.write(f"表 {i+1} の列名: {list(t.columns)}")
             st.dataframe(t.head(5), use_container_width=True)
 
-    PREF_PAT = re.compile("|".join(map(re.escape, PREFS)))
+    # ★修正：キャプチャグループ付きの正規表現にする（extractのエラー回避）
+    PREF_PAT = re.compile("(" + "|".join(map(re.escape, PREFS)) + ")")
 
     def extract_pref(df: pd.DataFrame):
         for c in df.columns:
             s = df[c].astype(str).str.replace(r"\s+", "", regex=True)
-            pref = s.str.extract(PREF_PAT, expand=False)
+            pref = s.str.extract(PREF_PAT, expand=False)  # ← ここでキャプチャグループが必要
             if pref.isin(PREFS).sum() >= 30:
                 return pref
         return None
@@ -313,7 +314,7 @@ def load_todoran_table(url, allow_rate=True, debug=False):
         got, val_col = score_and_build(pref_series, fallback)
         if got is not None:
             got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
-            return got.sort_values("pref").reset_index(drop_by=True), val_col  # safety
+            return got.sort_values("pref").reset_index(drop=True), val_col  # ← drop_by を drop に修正
 
         return None, None
 
