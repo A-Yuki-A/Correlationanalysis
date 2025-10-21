@@ -4,12 +4,11 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 外れ値含む散布図は外れ値を青で表示
-#   * 回帰直線＆ r / r² を散布図内に表示（zorder を上げて前面）
-#   * 箱ひげ描画後に xlim/ylim を復元して直線が消えないように
+#   * 散布図内に回帰直線＆ r / r² を表示（zorder を上げ、軸範囲復元で見切れ防止）
+# - 軸タイトルは散布図本体にだけ表示（「昇順/降順」を除去）
 # - 外れ値一覧（見やすい表＋バッジ＋CSV）
 # - 高校生向けIQR説明
 # - デバッグ表示あり
-# - 軸ラベル末尾の「昇順/降順」を強制除去
 
 import io
 import re
@@ -92,9 +91,13 @@ RATE_WORDS = ["率","割合","比率","％","パーセント","人当たり","�
 EXCLUDE_WORDS = ["順位","偏差値"]
 
 # ===== ユーティリティ =====
-def _clean_label(s):
-    # 軸ラベル末尾に紛れ込む「昇順」「降順」を除去
-    return str(s).replace("昇順", "").replace("降順", "").strip()
+def _clean_label(s: str) -> str:
+    txt = str(s or "")
+    # 「昇順」「降順」やその括弧つき表記を除去
+    txt = re.sub(r"[（(]?(昇順|降順)[)）]?", "", txt)
+    # 連続空白を1つに
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
 
 def show_fig(fig, width_px):
     buf = io.BytesIO()
@@ -141,7 +144,7 @@ def boxplot_inlier_mask(arr, whis=WHIS):
     inlier[~valid] = False
     return inlier, (q1, q3, iqr, low, high)
 
-# ===== 散布図＋箱ひげ図（回帰直線の前面化＆軸範囲復元） =====
+# ===== 散布図＋箱ひげ図（回帰直線の前面化＆軸範囲復元／軸ラベルは散布図本体にだけ） =====
 def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
@@ -187,21 +190,23 @@ def draw_scatter_with_marginal_boxplots(
     main_xlim = ax_main.get_xlim()
     main_ylim = ax_main.get_ylim()
 
-    # --- 軸ラベル（昇順/降順の文字を除去） ---
+    # --- 軸ラベル（散布図本体にだけ表示／不要語は除去して固定） ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
-    ax_main.set_xlabel(la_clean)
-    ax_main.set_ylabel("")  # Yは左の箱ひげ側に表示
+    ax_main.set_xlabel(la_clean, labelpad=6)
+    ax_main.set_ylabel(lb_clean, labelpad=6)
     ax_main.set_title(_clean_label(title))
-    ax_main.tick_params(axis="y", which="both", left=False, labelleft=False)
+    # 1e3 などのオフセット表記を抑制
+    ax_main.xaxis.offsetText.set_visible(False)
+    ax_main.yaxis.offsetText.set_visible(False)
 
-    # --- 周辺箱ひげ（whis=1.5） ---
+    # --- 周辺箱ひげ（whis=1.5）→ 軸タイトルは重複防止のため空に ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_x.set_xlabel(la_clean)
+    ax_box_x.set_xlabel("")          # 重複を避ける
     ax_box_x.yaxis.set_visible(False)
 
     ax_box_y.boxplot(y, vert=True, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_y.set_ylabel(lb_clean)
+    ax_box_y.set_ylabel("")          # 重複を避ける
     ax_box_y.xaxis.set_visible(False)
 
     # ★ 箱ひげ描画で sharey の影響を受けた軸範囲を復元（直線が見切れるのを防ぐ）
@@ -226,6 +231,7 @@ debug_mode = st.checkbox("デバッグ表示（表の抽出状況を表示）", 
 def load_todoran_table(url, allow_rate=True, debug=False):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
+    # エンコーディング推定の改善
     if not r.encoding or r.encoding.lower() in ("iso-8859-1", "us-ascii"):
         try:
             r.encoding = r.apparent_encoding
@@ -249,13 +255,14 @@ def load_todoran_table(url, allow_rate=True, debug=False):
             st.write(f"表 {i+1} の列名: {list(t.columns)}")
             st.dataframe(t.head(5), use_container_width=True)
 
-    # ★修正：キャプチャグループ付きの正規表現にする（extractのエラー回避）
+    # ★ str.extract 用にキャプチャグループ付き正規表現
     PREF_PAT = re.compile("(" + "|".join(map(re.escape, PREFS)) + ")")
 
     def extract_pref(df: pd.DataFrame):
+        """セル文字列から都道府県名を抽出（いずれかの列で30件以上ヒットしたら採用）"""
         for c in df.columns:
             s = df[c].astype(str).str.replace(r"\s+", "", regex=True)
-            pref = s.str.extract(PREF_PAT, expand=False)  # ← ここでキャプチャグループが必要
+            pref = s.str.extract(PREF_PAT, expand=False)
             if pref.isin(PREFS).sum() >= 30:
                 return pref
         return None
@@ -283,6 +290,7 @@ def load_todoran_table(url, allow_rate=True, debug=False):
                             if (c not in ("順位","都道府県","都道府県名","県名","道府県","府県","自治体","地域"))
                             and (not bad_name(c))]
 
+        # 総数系を優先
         prior = [c for c in value_candidates if any(k in c for k in TOTAL_KEYWORDS)]
         if allow_rate:
             fallback = value_candidates[:]
@@ -314,13 +322,14 @@ def load_todoran_table(url, allow_rate=True, debug=False):
         got, val_col = score_and_build(pref_series, fallback)
         if got is not None:
             got["pref"] = pd.Categorical(got["pref"], categories=PREFS, ordered=True)
-            return got.sort_values("pref").reset_index(drop=True), val_col  # ← drop_by を drop に修正
+            return got.sort_values("pref").reset_index(drop=True), val_col
 
         return None, None
 
     for raw in tables:
         got, label = pick_value_dataframe(raw)
         if got is not None:
+            # ラベルは抽出列名を採用（ページタイトル等は使わず安定性優先）
             return got, label
 
     if debug:
