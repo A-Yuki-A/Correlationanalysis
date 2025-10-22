@@ -58,8 +58,8 @@ WHIS = 1.5  # 箱ひげIQR倍率
 BASE_W_INCH, BASE_H_INCH = 6.4, 4.8
 
 # ===== タイトル／CSS =====
-st.title("CorrGraph：都道府県データの相関分析ツール")
-st.write("とどランの記事URLを2つ入力すると、共通の都道府県データで相関関係を分析します。")
+st.title("都道府県データの相関分析ツール")
+st.write("とどランの記事URLを2つ入力すると、相関分析ができます。")
 
 st.markdown("""
 <style>
