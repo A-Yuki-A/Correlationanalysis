@@ -64,7 +64,15 @@ st.write("とどランの記事URLを2つ入力すると、相関分析ができ
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"] { color:#111; background:#f5f5f5; }
-.block-container { max-width:980px; padding-top:1.2rem; padding-bottom:3rem; }
+
+/* ★ 上の余白をしっかり確保（Safe Area対応） */
+.block-container {
+  max-width:980px;
+  padding-top: calc(2.8rem + env(safe-area-inset-top, 0px));
+  padding-bottom:3rem;
+}
+
+/* 見た目はそのまま */
 h1,h2,h3 { color:#111; letter-spacing:.01em; }
 h1 { font-weight:800; } h2,h3 { font-weight:700; }
 button[kind="primary"], .stButton>button { background:#222; color:#fff; border:1.5px solid #000; }
@@ -74,6 +82,9 @@ button[kind="primary"], .stButton>button { background:#222; color:#fff; border:1
 .badge.blue { background:#e7f0ff; border-color:#2b67f6; color:#1a3daa; }
 .badge.gray { background:#eee; color:#222; }
 .small { font-size:.9rem; color:#333; }
+
+/* 見出しへスクロールしたときの欠け防止（内部リンク用） */
+h1, h2, h3 { scroll-margin-top: 96px; }
 </style>
 """, unsafe_allow_html=True)
 
