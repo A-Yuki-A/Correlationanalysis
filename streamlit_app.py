@@ -21,6 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
+import altair as alt  # ★ 追加：インタラクティブ散布図用
 
 # ===== フォント設定 =====
 fp = Path("fonts/SourceHanCodeJP-Regular.otf")
@@ -166,8 +167,15 @@ def draw_scatter_with_marginal_boxplots(
         st.warning("描画できるデータがありません。")
         return
 
+    # ★ 余白を少し広げた設定
     fig = plt.figure(figsize=(BASE_W_INCH*1.2, BASE_H_INCH*1.2))
-    gs = gridspec.GridSpec(2, 2, width_ratios=[1,4], height_ratios=[4,1], wspace=0.25, hspace=0.08)
+    gs = gridspec.GridSpec(
+        2, 2,
+        width_ratios=[1, 4],   # 左（箱ひげ）: 右（散布図）の幅比
+        height_ratios=[4, 1],
+        wspace=0.25,           # ← 左右のグラフ間の余白
+        hspace=0.08            # 上下の余白
+    )
     ax_main  = fig.add_subplot(gs[0,1])
     ax_box_y = fig.add_subplot(gs[0,0], sharey=ax_main)
     ax_box_x = fig.add_subplot(gs[1,1])
@@ -192,26 +200,29 @@ def draw_scatter_with_marginal_boxplots(
         xs = np.linspace(float(x.min()), float(x.max()), 200)
         ax_main.plot(xs, slope*xs + intercept, color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=4)
         r = float(np.corrcoef(x, y)[0, 1]); r2 = r**2
-        ax_main.text(0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
-                     transform=ax_main.transAxes, ha="left", va="top",
-                     fontsize=10, bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"), zorder=5)
+        ax_main.text(
+            0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
+            transform=ax_main.transAxes, ha="left", va="top",
+            fontsize=10,
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            zorder=5
+        )
         drew_line = True
 
-    # ここで一度散布図の表示範囲を保存（箱ひげ描画で変更されないように後で復元）
+    # 散布図の表示範囲を保存
     main_xlim = ax_main.get_xlim()
     main_ylim = ax_main.get_ylim()
 
-    # --- 軸ラベル（散布図本体にだけ表示／不要語は除去して固定） ---
+    # --- 軸ラベル（散布図本体にだけ表示） ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
     ax_main.set_xlabel(la_clean, labelpad=6)
     ax_main.set_ylabel(lb_clean, labelpad=6)
     ax_main.set_title(_clean_label(title))
-    # 1e3 などのオフセット表記を抑制
     ax_main.xaxis.offsetText.set_visible(False)
     ax_main.yaxis.offsetText.set_visible(False)
 
-    # --- 周辺箱ひげ（whis=1.5）→ 軸タイトルは重複防止のため空に ---
+    # --- 周辺箱ひげ（whis=1.5） ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
     ax_box_x.set_xlabel("")          # 重複を避ける
     ax_box_x.yaxis.set_visible(False)
@@ -220,16 +231,46 @@ def draw_scatter_with_marginal_boxplots(
     ax_box_y.set_ylabel("")          # 重複を避ける
     ax_box_y.xaxis.set_visible(False)
 
-    # ★ 箱ひげ描画で sharey の影響を受けた軸範囲を復元（直線が見切れるのを防ぐ）
+    # sharey の影響で変わった軸範囲を復元
     ax_main.set_xlim(main_xlim)
     ax_main.set_ylim(main_ylim)
 
-    # 念のため、直線を最前面に（箱ひげ後の順序影響対策）
+    # 念のため直線を最前面に
     if drew_line:
         for line in ax_main.lines:
             line.set_zorder(4)
 
     show_fig(fig, width_px)
+
+# ===== インタラクティブ散布図（マウスオーバーで都道府県名などを表示） =====
+def draw_interactive_scatter(x, y, la, lb, pref_all, title):
+    # NumPy 配列を DataFrame にまとめる
+    df_plot = pd.DataFrame({
+        "x": np.asarray(x, dtype=float),
+        "y": np.asarray(y, dtype=float),
+        "pref": np.asarray(pref_all, dtype=str)
+    })
+
+    chart = (
+        alt.Chart(df_plot)
+        .mark_circle(size=80)
+        .encode(
+            x=alt.X("x:Q", axis=alt.Axis(title=_clean_label(la))),
+            y=alt.Y("y:Q", axis=alt.Axis(title=_clean_label(lb))),
+            tooltip=[
+                alt.Tooltip("pref:N", title="都道府県"),
+                alt.Tooltip("x:Q", title=_clean_label(la), format=".3f"),
+                alt.Tooltip("y:Q", title=_clean_label(lb), format=".3f"),
+            ]
+        )
+        .properties(
+            title=_clean_label(title),
+            width=620,
+            height=420
+        )
+    )
+
+    st.altair_chart(chart, use_container_width=True)
 
 # ===== URL入力 =====
 url_a = st.text_input("X軸URL（説明変数）", placeholder="https://todo-ran.com/t/kiji/XXXXX", key="url_a")
@@ -434,6 +475,15 @@ if st.session_state.get("display_df") is not None:
         draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
+        )
+
+        # ★ 追加：マウスオーバーで都道府県名・値を表示する散布図
+        st.markdown("### 散布図（マウスオーバーで都道府県名・値を表示）")
+        draw_interactive_scatter(
+            c["x_all"], c["y_all"],
+            c["label_a"], c["label_b"],
+            c["pref_all"],
+            "インタラクティブ散布図"
         )
 
         # 外れ値一覧
