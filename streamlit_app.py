@@ -107,7 +107,7 @@ EXCLUDE_WORDS = ["順位","偏差値"]
 def _clean_label(s: str) -> str:
     txt = str(s or "")
     # 「昇順」「降順」やその括弧つき表記を除去
-    txt = re.sub(r"[（(]?(昇順|降順)[)）]?", txt)
+    txt = re.sub(r"[（(]?(昇順|降順)[)）]?", "", txt)
     # 連続空白を1つに
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
