@@ -3,12 +3,10 @@
 # - とどランURL×2 → 都道府県データ抽出と相関分析
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
-#   * 外れ値含む散布図は外れ値を青で表示（Matplotlib）
-#   * 散布図内に回帰直線＆ r / r² を表示（Matplotlib）
-#   * 下に「散布図だけ」Plotly版を追加 → プロットにマウスオーバーで都道府県名・値を表示
-#   * 箱ひげ図は Matplotlib 画像なのでホバーは一切なし
-# - 軸タイトルは散布図本体にだけ表示（「昇順/降順」を除去）
-# - 外れ値一覧（見やすい表＋バッジ＋CSV）
+#   * 中央は Matplotlib：散布図＋周辺箱ひげ図（軸タイトルは箱ひげ側に表示）
+#   * 散布図内に回帰直線＆ r / r² を表示
+#   * 下に Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）
+# - 外れ値一覧（表＋CSV）
 # - 高校生向けIQR説明
 # - デバッグ表示あり
 
@@ -85,7 +83,7 @@ button[kind="primary"], .stButton>button { background:#222; color:#fff; border:1
          border:1px solid #111; background:#fff; color:#111; margin-right:.35rem; }
 .badge.blue { background:#e7f0ff; border-color:#2b67f6; color:#1a3daa; }
 .badge.gray { background:#eee; color:#222; }
-.small { fontサイズ:.9rem; color:#333; }
+.small { font-size:.9rem; color:#333; }
 
 /* 見出しへスクロールしたときの欠け防止（内部リンク用） */
 h1, h2, h3 { scroll-margin-top: 96px; }
@@ -159,7 +157,7 @@ def boxplot_inlier_mask(arr, whis=WHIS):
     inlier[~valid] = False
     return inlier, (q1, q3, iqr, low, high)
 
-# ===== 散布図＋箱ひげ図（Matplotlib：回帰直線の前面化＆軸範囲復元） =====
+# ===== 散布図＋箱ひげ図（Matplotlib：軸タイトルは箱ひげ側に表示） =====
 def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
@@ -219,19 +217,18 @@ def draw_scatter_with_marginal_boxplots(
     # --- 軸ラベルなど ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
-    ax_main.set_xlabel(la_clean, labelpad=6)
-    ax_main.set_ylabel(lb_clean, labelpad=6)
+    # 中央の散布図には軸タイトルを付けない
     ax_main.set_title(_clean_label(title))
     ax_main.xaxis.offsetText.set_visible(False)
     ax_main.yaxis.offsetText.set_visible(False)
 
-    # --- 周辺箱ひげ（whis=1.5） ---
+    # --- 周辺箱ひげ（whis=1.5）→ こちら側に軸タイトルを表示 ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_x.set_xlabel("")
+    ax_box_x.set_xlabel(la_clean, labelpad=6)
     ax_box_x.yaxis.set_visible(False)
 
     ax_box_y.boxplot(y, vert=True, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_y.set_ylabel("")
+    ax_box_y.set_ylabel(lb_clean, labelpad=6)
     ax_box_y.xaxis.set_visible(False)
 
     # 軸範囲を復元
