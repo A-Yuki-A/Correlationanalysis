@@ -4,7 +4,8 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 外れ値含む散布図は外れ値を青で表示
-#   * 散布図内に回帰直線＆ r / r² を表示（zorder を上げ、軸範囲復元で見切れ防止）
+#   * 散布図内に回帰直線＆ r / r² を表示
+#   * プロットにマウスオーバーで都道府県名・値を表示（Plotly）
 # - 軸タイトルは散布図本体にだけ表示（「昇順/降順」を除去）
 # - 外れ値一覧（見やすい表＋バッジ＋CSV）
 # - 高校生向けIQR説明
@@ -21,7 +22,8 @@ import requests
 from bs4 import BeautifulSoup
 from pandas.api.types import is_scalar
 from pathlib import Path
-import altair as alt  # ★ 追加：インタラクティブ散布図用
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ===== フォント設定 =====
 fp = Path("fonts/SourceHanCodeJP-Regular.otf")
@@ -156,121 +158,130 @@ def boxplot_inlier_mask(arr, whis=WHIS):
     inlier[~valid] = False
     return inlier, (q1, q3, iqr, low, high)
 
-# ===== 散布図＋箱ひげ図（回帰直線の前面化＆軸範囲復元／軸ラベルは散布図本体にだけ） =====
+# ===== 散布図＋箱ひげ図（Plotly版：ホバーで都道府県名表示） =====
 def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
-    import matplotlib.gridspec as gridspec
     ok = np.isfinite(x) & np.isfinite(y)
-    x = np.asarray(x)[ok]; y = np.asarray(y)[ok]
+    x = np.asarray(x)[ok]
+    y = np.asarray(y)[ok]
+
     if len(x) == 0:
         st.warning("描画できるデータがありません。")
         return
 
-    # ★ 余白を少し広げた設定
-    fig = plt.figure(figsize=(BASE_W_INCH*1.2, BASE_H_INCH*1.2))
-    gs = gridspec.GridSpec(
-        2, 2,
-        width_ratios=[1, 4],   # 左（箱ひげ）: 右（散布図）の幅比
-        height_ratios=[4, 1],
-        wspace=0.25,           # ← 左右のグラフ間の余白
-        hspace=0.08            # 上下の余白
-    )
-    ax_main  = fig.add_subplot(gs[0,1])
-    ax_box_y = fig.add_subplot(gs[0,0], sharey=ax_main)
-    ax_box_x = fig.add_subplot(gs[1,1])
-    ax_empty = fig.add_subplot(gs[1,0]); ax_empty.axis("off")
-
-    # --- 散布図（外れ値は青） ---
-    if outs_x is not None and outs_y is not None and pref_all is not None:
-        pref_all = np.asarray(pref_all)[ok]
-        out_set_x, out_set_y = set(map(str, outs_x)), set(map(str, outs_y))
-        out_mask = np.array([(p in out_set_x) or (p in out_set_y) for p in pref_all])
-        in_mask = ~out_mask
-        ax_main.scatter(x[in_mask], y[in_mask], color="gray", s=DEFAULT_MARKER_SIZE, label="通常データ", zorder=2)
-        ax_main.scatter(x[out_mask], y[out_mask], color="blue", s=DEFAULT_MARKER_SIZE, label="外れ値", zorder=3)
-        ax_main.legend(frameon=False, loc="best")
+    # 都道府県名（あるときだけ使う）
+    if pref_all is not None:
+        pref_all = np.asarray(pref_all)[ok].astype(str)
     else:
-        ax_main.scatter(x, y, color="gray", s=DEFAULT_MARKER_SIZE, zorder=2)
+        pref_all = np.array([""] * len(x))
 
-    # --- 回帰直線（前面に）＆ r / r² ---
-    drew_line = False
-    if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
-        slope, intercept = np.polyfit(x, y, 1)
-        xs = np.linspace(float(x.min()), float(x.max()), 200)
-        ax_main.plot(xs, slope*xs + intercept, color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=4)
-        r = float(np.corrcoef(x, y)[0, 1]); r2 = r**2
-        ax_main.text(
-            0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
-            transform=ax_main.transAxes, ha="left", va="top",
-            fontsize=10,
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            zorder=5
-        )
-        drew_line = True
+    # 外れ値フラグ（outs_x, outs_y が渡されているときだけ使う）
+    kind = np.array(["通常データ"] * len(x))
+    if outs_x is not None and outs_y is not None:
+        outs_x_set = set(map(str, outs_x))
+        outs_y_set = set(map(str, outs_y))
+        is_out = np.array([
+            (p in outs_x_set) or (p in outs_y_set)
+            for p in pref_all
+        ])
+        kind[is_out] = "外れ値"
 
-    # 散布図の表示範囲を保存
-    main_xlim = ax_main.get_xlim()
-    main_ylim = ax_main.get_ylim()
-
-    # --- 軸ラベル（散布図本体にだけ表示） ---
-    la_clean = _clean_label(la)
-    lb_clean = _clean_label(lb)
-    ax_main.set_xlabel(la_clean, labelpad=6)
-    ax_main.set_ylabel(lb_clean, labelpad=6)
-    ax_main.set_title(_clean_label(title))
-    ax_main.xaxis.offsetText.set_visible(False)
-    ax_main.yaxis.offsetText.set_visible(False)
-
-    # --- 周辺箱ひげ（whis=1.5） ---
-    ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_x.set_xlabel("")          # 重複を避ける
-    ax_box_x.yaxis.set_visible(False)
-
-    ax_box_y.boxplot(y, vert=True, widths=0.6, whis=WHIS, showfliers=True)
-    ax_box_y.set_ylabel("")          # 重複を避ける
-    ax_box_y.xaxis.set_visible(False)
-
-    # sharey の影響で変わった軸範囲を復元
-    ax_main.set_xlim(main_xlim)
-    ax_main.set_ylim(main_ylim)
-
-    # 念のため直線を最前面に
-    if drew_line:
-        for line in ax_main.lines:
-            line.set_zorder(4)
-
-    show_fig(fig, width_px)
-
-# ===== インタラクティブ散布図（マウスオーバーで都道府県名などを表示） =====
-def draw_interactive_scatter(x, y, la, lb, pref_all, title):
-    # NumPy 配列を DataFrame にまとめる
+    # 描画用 DataFrame
     df_plot = pd.DataFrame({
-        "x": np.asarray(x, dtype=float),
-        "y": np.asarray(y, dtype=float),
-        "pref": np.asarray(pref_all, dtype=str)
+        "x": x,
+        "y": y,
+        "pref": pref_all,
+        "kind": kind,
     })
 
-    chart = (
-        alt.Chart(df_plot)
-        .mark_circle(size=80)
-        .encode(
-            x=alt.X("x:Q", axis=alt.Axis(title=_clean_label(la))),
-            y=alt.Y("y:Q", axis=alt.Axis(title=_clean_label(lb))),
-            tooltip=[
-                alt.Tooltip("pref:N", title="都道府県"),
-                alt.Tooltip("x:Q", title=_clean_label(la), format=".3f"),
-                alt.Tooltip("y:Q", title=_clean_label(lb), format=".3f"),
-            ]
-        )
-        .properties(
-            title=_clean_label(title),
-            width=620,
-            height=420
-        )
+    la_clean = _clean_label(la)
+    lb_clean = _clean_label(lb)
+    title_clean = _clean_label(title)
+
+    # 色設定
+    if "外れ値" in df_plot["kind"].unique():
+        color_arg = "kind"
+        color_map = {"通常データ": "gray", "外れ値": "blue"}
+    else:
+        color_arg = None
+        color_map = {}
+
+    # Plotlyで散布図＋周辺箱ひげ
+    fig = px.scatter(
+        df_plot,
+        x="x",
+        y="y",
+        color=color_arg,
+        color_discrete_map=color_map,
+        hover_data={
+            "pref": True,
+            "x": ":.3f",
+            "y": ":.3f",
+            "kind": True,
+        },
+        labels={
+            "x": la_clean,
+            "y": lb_clean,
+            "pref": "都道府県",
+            "kind": "データ種別",
+        },
+        title=title_clean,
+        marginal_x="box",   # 上に箱ひげ
+        marginal_y="box",   # 右に箱ひげ
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    # 回帰直線（全部の点で計算）
+    if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
+        slope, intercept = np.polyfit(x, y, 1)
+        xs_line = np.linspace(float(x.min()), float(x.max()), 200)
+        ys_line = slope * xs_line + intercept
+
+        # 相関係数 r, r^2
+        r = float(np.corrcoef(x, y)[0, 1])
+        r2 = r ** 2
+
+        fig.add_trace(
+            go.Scatter(
+                x=xs_line,
+                y=ys_line,
+                mode="lines",
+                name="回帰直線",
+                line=dict(color="black", width=2),
+                hoverinfo="skip",  # 線そのものにはホバー情報不要
+                showlegend=False,
+            )
+        )
+
+        # 図の中に r, r^2 を表示
+        fig.add_annotation(
+            xref="paper",
+            yref="paper",
+            x=0.02,
+            y=0.98,
+            text=f"r={r:.3f}<br>r²={r2:.3f}",
+            showarrow=False,
+            align="left",
+            bgcolor="white",
+            bordercolor="black",
+            borderwidth=0,
+            font=dict(size=12),
+        )
+
+    fig.update_layout(
+        width=width_px,
+        height=int(width_px * 0.7),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=60, r=20, t=60, b=60),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 # ===== URL入力 =====
 url_a = st.text_input("X軸URL（説明変数）", placeholder="https://todo-ran.com/t/kiji/XXXXX", key="url_a")
@@ -475,15 +486,6 @@ if st.session_state.get("display_df") is not None:
         draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
-        )
-
-        # ★ 追加：マウスオーバーで都道府県名・値を表示する散布図
-        st.markdown("### 散布図（マウスオーバーで都道府県名・値を表示）")
-        draw_interactive_scatter(
-            c["x_all"], c["y_all"],
-            c["label_a"], c["label_b"],
-            c["pref_all"],
-            "インタラクティブ散布図"
         )
 
         # 外れ値一覧
