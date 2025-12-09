@@ -174,8 +174,8 @@ def draw_scatter_with_marginal_boxplots(
         2, 2,
         width_ratios=[1, 4],
         height_ratios=[4, 1],
-        wspace=0.25,   # 左箱ひげと散布図の余白を少し広めに
-        hspace=0.08,
+        wspace=0.15,   # 左箱ひげと散布図の余白を少し広めに
+        hspace=0.05,
     )
     ax_main  = fig.add_subplot(gs[0, 1])
     ax_box_y = fig.add_subplot(gs[0, 0], sharey=ax_main)
