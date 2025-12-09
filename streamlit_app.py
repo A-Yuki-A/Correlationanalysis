@@ -225,11 +225,11 @@ def draw_scatter_with_marginal_boxplots(
     # --- 周辺箱ひげ（whis=1.5）→ こちら側に軸タイトルを表示 ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
     ax_box_x.set_xlabel(la_clean, labelpad=6)
-    ax_box_x.yaxis.set_visible(False)
+    ax_box_x.set_yticks([])
 
     ax_box_y.boxplot(y, vert=True, widths=0.6, whis=WHIS, showfliers=True)
     ax_box_y.set_ylabel(lb_clean, labelpad=6)
-    ax_box_y.xaxis.set_visible(False)
+    ax_box_y.set_xticks([])
 
     # 軸範囲を復元
     ax_main.set_xlim(main_xlim)
