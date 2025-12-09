@@ -167,7 +167,7 @@ def draw_scatter_with_marginal_boxplots(
         return
 
     fig = plt.figure(figsize=(BASE_W_INCH*1.2, BASE_H_INCH*1.2))
-    gs = gridspec.GridSpec(2, 2, width_ratios=[1,4], height_ratios=[4,1], wspace=0.05, hspace=0.05)
+    gs = gridspec.GridSpec(2, 2, width_ratios=[1,4], height_ratios=[4,1], wspace=0.25, hspace=0.08)
     ax_main  = fig.add_subplot(gs[0,1])
     ax_box_y = fig.add_subplot(gs[0,0], sharey=ax_main)
     ax_box_x = fig.add_subplot(gs[1,1])
