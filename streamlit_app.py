@@ -6,6 +6,7 @@
 #   * 外れ値含む散布図は外れ値を青で表示
 #   * 散布図内に回帰直線＆ r / r² を表示
 #   * プロットにマウスオーバーで都道府県名・値を表示（Plotly）
+#   * 箱ひげ図はホバー無し（散布図のみホバー）
 # - 軸タイトルは散布図本体にだけ表示（「昇順/降順」を除去）
 # - 外れ値一覧（見やすい表＋バッジ＋CSV）
 # - 高校生向けIQR説明
@@ -158,7 +159,7 @@ def boxplot_inlier_mask(arr, whis=WHIS):
     inlier[~valid] = False
     return inlier, (q1, q3, iqr, low, high)
 
-# ===== 散布図＋箱ひげ図（Plotly版：ホバーで都道府県名表示） =====
+# ===== 散布図＋箱ひげ図（Plotly版：散布図のみホバー表示） =====
 def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
@@ -170,13 +171,13 @@ def draw_scatter_with_marginal_boxplots(
         st.warning("描画できるデータがありません。")
         return
 
-    # 都道府県名（あるときだけ使う）
+    # 都道府県名
     if pref_all is not None:
         pref_all = np.asarray(pref_all)[ok].astype(str)
     else:
         pref_all = np.array([""] * len(x))
 
-    # 外れ値フラグ（outs_x, outs_y が渡されているときだけ使う）
+    # 外れ値フラグ（outs_x, outs_y が渡されているときだけ）
     kind = np.array(["通常データ"] * len(x))
     if outs_x is not None and outs_y is not None:
         outs_x_set = set(map(str, outs_x))
@@ -248,7 +249,7 @@ def draw_scatter_with_marginal_boxplots(
                 mode="lines",
                 name="回帰直線",
                 line=dict(color="black", width=2),
-                hoverinfo="skip",  # 線そのものにはホバー情報不要
+                hoverinfo="skip",  # 線はホバー不要
                 showlegend=False,
             )
         )
@@ -267,6 +268,11 @@ def draw_scatter_with_marginal_boxplots(
             borderwidth=0,
             font=dict(size=12),
         )
+
+    # ★ 箱ひげ図のホバーを無効化（trace.type が "box" のもの）
+    for tr in fig.data:
+        if tr.type == "box":
+            tr.hoverinfo = "skip"
 
     fig.update_layout(
         width=width_px,
