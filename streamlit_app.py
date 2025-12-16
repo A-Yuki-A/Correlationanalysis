@@ -240,7 +240,7 @@ def draw_scatter_with_marginal_boxplots(
         ax_main.text(
             0.02, 0.95, "回帰直線なし\n(点数不足/ばらつき不足)",
             transform=ax_main.transAxes, ha="left", va="top",
-            fontsize=10,
+            fontsize=14,
             bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
             zorder=11,
         )
