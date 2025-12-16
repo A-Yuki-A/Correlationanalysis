@@ -538,16 +538,7 @@ if st.session_state.get("display_df") is not None:
             width_px=720
         )
 
-        # Plotly：外れ値除外（回帰式あり）
-        st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認：外れ値除外）")
-        draw_interactive_scatter(
-            c["x_in"], c["y_in"],
-            c["label_a"], c["label_b"],
-            c["pref_in"],
-            "インタラクティブ散布図（外れ値除外）",
-            width_px=720
-        )
-
+       
         # 外れ値一覧
         st.markdown("---")
         st.subheader("外れ値として処理した都道府県（一覧）")
