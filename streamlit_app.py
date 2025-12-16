@@ -4,9 +4,8 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 中央は Matplotlib：散布図＋周辺箱ひげ図（軸タイトルは箱ひげ側に表示）
-#   * 散布図内に回帰直線＆ 回帰式（y=ax+b）＆ r / r² を表示
-#   * 下に Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）
-#   * Plotlyも外れ値「含む」「除外」を両方表示（両方に回帰式も注記）
+#   * 散布図内に回帰直線のみ（文字は図の下に表示）
+# - Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）※外れ値含むのみ表示
 # - 外れ値一覧（表＋CSV）
 # - 高校生向けIQR説明
 # - デバッグ表示あり
@@ -67,15 +66,11 @@ st.write("とどランの記事URLを2つ入力すると、相関分析ができ
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"] { color:#111; background:#f5f5f5; }
-
-/* ★ 上の余白をしっかり確保（Safe Area対応） */
 .block-container {
   max-width:980px;
   padding-top: calc(2.8rem + env(safe-area-inset-top, 0px));
   padding-bottom:3rem;
 }
-
-/* 見た目はそのまま */
 h1,h2,h3 { color:#111; letter-spacing:.01em; }
 h1 { font-weight:800; } h2,h3 { font-weight:700; }
 button[kind="primary"], .stButton>button { background:#222; color:#fff; border:1.5px solid #000; }
@@ -85,8 +80,6 @@ button[kind="primary"], .stButton>button { background:#222; color:#fff; border:1
 .badge.blue { background:#e7f0ff; border-color:#2b67f6; color:#1a3daa; }
 .badge.gray { background:#eee; color:#222; }
 .small { font-size:.9rem; color:#333; }
-
-/* 見出しへスクロールしたときの欠け防止（内部リンク用） */
 h1, h2, h3 { scroll-margin-top: 96px; }
 </style>
 """, unsafe_allow_html=True)
@@ -134,7 +127,6 @@ def to_number(x):
         return np.nan
 
 def boxplot_inlier_mask(arr, whis=WHIS):
-    """箱ひげ（whis×IQR）基準でinlier判定と境界値を返す"""
     arr = np.asarray(arr, dtype=float)
     valid = np.isfinite(arr)
     vals = arr[valid]
@@ -147,7 +139,7 @@ def boxplot_inlier_mask(arr, whis=WHIS):
     inlier[~valid] = False
     return inlier, (q1, q3, iqr, low, high)
 
-# ===== 散布図＋箱ひげ図（Matplotlib：回帰式も表示） =====
+# ===== 散布図＋箱ひげ図（Matplotlib：図の下に回帰情報を出す） =====
 def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
@@ -158,7 +150,7 @@ def draw_scatter_with_marginal_boxplots(
     y = np.asarray(y)[ok]
     if len(x) == 0:
         st.warning("描画できるデータがありません。")
-        return
+        return None
 
     fig = plt.figure(figsize=(BASE_W_INCH * 1.2, BASE_H_INCH * 1.2))
     gs = gridspec.GridSpec(
@@ -185,14 +177,14 @@ def draw_scatter_with_marginal_boxplots(
     else:
         ax_main.scatter(x, y, color="gray", s=DEFAULT_MARKER_SIZE, zorder=2)
 
-    # --- ラベル類 ---
+    # --- タイトル等（散布図には軸タイトルを付けない） ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
     ax_main.set_title(_clean_label(title))
     ax_main.xaxis.offsetText.set_visible(False)
     ax_main.yaxis.offsetText.set_visible(False)
 
-    # --- 周辺箱ひげ（whis=1.5） ---
+    # --- 周辺箱ひげ ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
     ax_box_x.set_xlabel(la_clean, labelpad=6)
     ax_box_x.set_yticks([])
@@ -201,7 +193,8 @@ def draw_scatter_with_marginal_boxplots(
     ax_box_y.set_ylabel(lb_clean, labelpad=6)
     ax_box_y.set_xticks([])
 
-    # --- 回帰直線＆ 回帰式＆ r / r²（最後に描く＋軸範囲を線も含むよう調整）---
+    # --- 回帰直線（図の中は線だけ）＋ 回帰情報を return ---
+    reg = None
     if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
         slope, intercept = np.polyfit(x, y, 1)
         r = float(np.corrcoef(x, y)[0, 1])
@@ -209,20 +202,11 @@ def draw_scatter_with_marginal_boxplots(
 
         xs = np.linspace(float(x.min()), float(x.max()), 200)
         ys = slope * xs + intercept
-
         ax_main.plot(xs, ys, color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=10)
 
-        # 回帰式を整形（符号をきれいに）
         sign = "+" if intercept >= 0 else "-"
         eq = f"y = {slope:.3f}x {sign} {abs(intercept):.3f}"
-
-        ax_main.text(
-            0.02, 0.95, f"{eq}\nr={r:.3f}\nr²={r2:.3f}",
-            transform=ax_main.transAxes, ha="left", va="top",
-            fontsize=14,
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            zorder=11,
-        )
+        reg = {"eq": eq, "r": r, "r2": r2}
 
         # ★重要：点の範囲＋回帰直線の範囲を両方含む
         xmin, xmax = float(np.min(x)), float(np.max(x))
@@ -236,25 +220,18 @@ def draw_scatter_with_marginal_boxplots(
 
         ax_main.set_xlim(xmin - pad_x, xmax + pad_x)
         ax_main.set_ylim(ymin - pad_y, ymax + pad_y)
-    else:
-        ax_main.text(
-            0.02, 0.95, "回帰直線なし\n(点数不足/ばらつき不足)",
-            transform=ax_main.transAxes, ha="left", va="top",
-            fontsize=14,
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            zorder=11,
-        )
 
     show_fig(fig, width_px)
+    return reg
 
-# ===== インタラクティブ散布図（Plotly：回帰式も注記） =====
+# ===== インタラクティブ散布図（Plotly：図の下に回帰情報を出す） =====
 def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
     ok = np.isfinite(x) & np.isfinite(y)
     x = np.asarray(x)[ok]
     y = np.asarray(y)[ok]
     if len(x) == 0:
         st.warning("描画できるデータがありません。")
-        return
+        return None
 
     if pref_all is not None:
         pref_all = np.asarray(pref_all)[ok].astype(str)
@@ -276,13 +253,14 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
         title=title_clean,
     )
 
-    # 回帰直線（※この散布図の x,y から毎回計算）
+    reg = None
     if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
         slope, intercept = np.polyfit(x, y, 1)
-        xs_line = np.linspace(float(x.min()), float(x.max()), 200)
-        ys_line = slope * xs_line + intercept
         r = float(np.corrcoef(x, y)[0, 1])
         r2 = r ** 2
+
+        xs_line = np.linspace(float(x.min()), float(x.max()), 200)
+        ys_line = slope * xs_line + intercept
 
         fig.add_trace(
             go.Scatter(
@@ -298,18 +276,7 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
 
         sign = "+" if intercept >= 0 else "-"
         eq = f"y = {slope:.3f}x {sign} {abs(intercept):.3f}"
-
-        fig.add_annotation(
-            xref="paper", yref="paper",
-            x=0.02, y=0.98,
-            text=f"{eq}<br>r={r:.3f}<br>r²={r2:.3f}",
-            showarrow=False,
-            align="left",
-            bgcolor="white",
-            bordercolor="black",
-            borderwidth=0,
-            font=dict(size=12),
-        )
+        reg = {"eq": eq, "r": r, "r2": r2}
 
     fig.update_layout(
         width=width_px,
@@ -318,6 +285,26 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+    return reg
+
+def show_regression_below(title: str, reg: dict, big: bool = True):
+    if reg is None:
+        st.markdown(f"**{title}**：回帰直線なし（点数不足／ばらつき不足）")
+        return
+    fs = "1.1rem" if big else "1.0rem"
+    st.markdown(
+        f"""
+<div style="margin-top:.25rem; margin-bottom:1rem; padding:.6rem .8rem; background:#fff; border:1px solid #ddd; border-radius:10px;">
+  <div style="font-weight:800; margin-bottom:.25rem;">{title}</div>
+  <div style="font-size:{fs}; line-height:1.6;">
+    回帰式： <b>{reg["eq"]}</b><br>
+    相関係数 r： <b>{reg["r"]:.3f}</b><br>
+    決定係数 r²： <b>{reg["r2"]:.3f}</b>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True
+    )
 
 # ===== URL入力 =====
 url_a = st.text_input("X軸URL（説明変数）", placeholder="https://todo-ran.com/t/kiji/XXXXX", key="url_a")
@@ -487,19 +474,11 @@ if do_calc:
     outs_x = pref_all[~mask_x_in]
     outs_y = pref_all[~mask_y_in]
 
-    x_in = x_all[mask_in]
-    y_in = y_all[mask_in]
-    pref_in = pref_all[mask_in]
-
     st.session_state["calc"] = {
         "x_all": x_all, "y_all": y_all, "pref_all": pref_all,
-        "x_in": x_in, "y_in": y_in, "pref_in": pref_in,
+        "x_in": x_all[mask_in], "y_in": y_all[mask_in],
         "label_a": label_a, "label_b": label_b,
         "outs_x": outs_x, "outs_y": outs_y,
-        "iqr_info": {
-            "x": {"Q1": q1x, "Q3": q3x, "IQR": ix, "LOW": lox, "HIGH": hix},
-            "y": {"Q1": q1y, "Q3": q3y, "IQR": iy, "LOW": loy, "HIGH": hiy},
-        }
     }
 
 # ===== 表示 =====
@@ -515,30 +494,32 @@ if st.session_state.get("display_df") is not None:
     if st.session_state.get("calc") is not None:
         c = st.session_state["calc"]
 
-        # Matplotlib：外れ値を含む（回帰式あり）
-        draw_scatter_with_marginal_boxplots(
+        # Matplotlib：外れ値を含む
+        reg_all = draw_scatter_with_marginal_boxplots(
             c["x_all"], c["y_all"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値を含む）", width_px=720,
             outs_x=c["outs_x"], outs_y=c["outs_y"], pref_all=c["pref_all"]
         )
+        show_regression_below("回帰分析の結果（外れ値を含む）", reg_all, big=True)
 
-        # Matplotlib：外れ値除外（回帰式あり）
-        draw_scatter_with_marginal_boxplots(
+        # Matplotlib：外れ値除外
+        reg_in = draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
         )
+        show_regression_below("回帰分析の結果（外れ値除外）", reg_in, big=True)
 
-        # Plotly：外れ値を含む（回帰式あり）
+        # Plotly：外れ値を含む（ホバー用）
         st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認）")
-        draw_interactive_scatter(
+        reg_plotly = draw_interactive_scatter(
             c["x_all"], c["y_all"],
             c["label_a"], c["label_b"],
             c["pref_all"],
             "インタラクティブ散布図",
             width_px=720
         )
+        show_regression_below("回帰分析の結果（インタラクティブ散布図）", reg_plotly, big=False)
 
-       
         # 外れ値一覧
         st.markdown("---")
         st.subheader("外れ値として処理した都道府県（一覧）")
