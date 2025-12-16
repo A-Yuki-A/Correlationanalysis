@@ -4,8 +4,9 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 中央は Matplotlib：散布図＋周辺箱ひげ図（軸タイトルは箱ひげ側に表示）
-#   * 散布図内に回帰直線＆ r / r² を表示（※各散布図で別々に計算）
+#   * 散布図内に回帰直線＆ r / r² を表示（※必ず最前面に描画する方式）
 #   * 下に Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）
+#   * Plotlyも外れ値「含む」「除外」を両方表示
 # - 外れ値一覧（表＋CSV）
 # - 高校生向けIQR説明
 # - デバッグ表示あり
@@ -194,21 +195,12 @@ def draw_scatter_with_marginal_boxplots(
     else:
         ax_main.scatter(x, y, color="gray", s=DEFAULT_MARKER_SIZE, zorder=2)
 
-    # --- 回帰直線＆ r / r²（※この散布図の x,y から毎回計算） ---
-    drew_line = False
+    # --- 回帰直線の係数だけ先に計算して保持（描画は最後にする）---
+    reg = None
     if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
         slope, intercept = np.polyfit(x, y, 1)
-        xs = np.linspace(float(x.min()), float(x.max()), 200)
-        ax_main.plot(xs, slope * xs + intercept, color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=4)
-        r = float(np.corrcoef(x, y)[0, 1]); r2 = r ** 2
-        ax_main.text(
-            0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
-            transform=ax_main.transAxes, ha="left", va="top",
-            fontsize=10,
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            zorder=5,
-        )
-        drew_line = True
+        r = float(np.corrcoef(x, y)[0, 1])
+        reg = (float(slope), float(intercept), float(r), float(r**2))
 
     # 軸範囲を保存（箱ひげ追加で崩れないように）
     main_xlim = ax_main.get_xlim()
@@ -217,7 +209,6 @@ def draw_scatter_with_marginal_boxplots(
     # --- 軸ラベルなど ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
-    # 中央の散布図には軸タイトルを付けない
     ax_main.set_title(_clean_label(title))
     ax_main.xaxis.offsetText.set_visible(False)
     ax_main.yaxis.offsetText.set_visible(False)
@@ -235,10 +226,23 @@ def draw_scatter_with_marginal_boxplots(
     ax_main.set_xlim(main_xlim)
     ax_main.set_ylim(main_ylim)
 
-    # 念のため直線を最前面に
-    if drew_line:
-        for line in ax_main.lines:
-            line.set_zorder(4)
+    # --- 回帰直線＆ r / r² を最後に描く（最前面固定）---
+    if reg is not None:
+        slope, intercept, r, r2 = reg
+        xs = np.linspace(float(x.min()), float(x.max()), 200)
+        ax_main.plot(
+            xs, slope * xs + intercept,
+            color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=10
+        )
+        ax_main.text(
+            0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
+            transform=ax_main.transAxes, ha="left", va="top",
+            fontsize=10,
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            zorder=11,
+        )
+    else:
+        st.warning("回帰直線を計算できません（点数不足 or ばらつき不足）。")
 
     show_fig(fig, width_px)
 
@@ -256,11 +260,7 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
     else:
         pref_all = np.array([""] * len(x))
 
-    df_plot = pd.DataFrame({
-        "x": x,
-        "y": y,
-        "pref": pref_all,
-    })
+    df_plot = pd.DataFrame({"x": x, "y": y, "pref": pref_all})
 
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
@@ -270,16 +270,8 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
         df_plot,
         x="x",
         y="y",
-        hover_data={
-            "pref": True,
-            "x": ":.3f",
-            "y": ":.3f",
-        },
-        labels={
-            "x": la_clean,
-            "y": lb_clean,
-            "pref": "都道府県",
-        },
+        hover_data={"pref": True, "x": ":.3f", "y": ":.3f"},
+        labels={"x": la_clean, "y": lb_clean, "pref": "都道府県"},
         title=title_clean,
     )
 
@@ -296,16 +288,14 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
                 y=ys_line,
                 mode="lines",
                 name="回帰直線",
-                line=dict(color="black", width=2),
+                line=dict(color="black", width=4),  # 太め
                 hoverinfo="skip",
                 showlegend=False,
             )
         )
         fig.add_annotation(
-            xref="paper",
-            yref="paper",
-            x=0.02,
-            y=0.98,
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
             text=f"r={r:.3f}<br>r²={r2:.3f}",
             showarrow=False,
             align="left",
@@ -334,7 +324,6 @@ debug_mode = st.checkbox("デバッグ表示（表の抽出状況を表示）", 
 def load_todoran_table(url, allow_rate=True, debug=False):
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Streamlit/URL-extractor)"}
     r = requests.get(url, headers=headers, timeout=20)
-    # エンコーディング推定の改善
     if not r.encoding or r.encoding.lower() in ("iso-8859-1", "us-ascii"):
         try:
             r.encoding = r.apparent_encoding
@@ -343,7 +332,6 @@ def load_todoran_table(url, allow_rate=True, debug=False):
     r.raise_for_status()
     html = r.text
 
-    soup = BeautifulSoup(html, "lxml")
     try:
         tables = pd.read_html(html, flavor="lxml")
     except Exception:
@@ -358,11 +346,9 @@ def load_todoran_table(url, allow_rate=True, debug=False):
             st.write(f"表 {i+1} の列名: {list(t.columns)}")
             st.dataframe(t.head(5), use_container_width=True)
 
-    # ★ str.extract 用にキャプチャグループ付き正規表現
     PREF_PAT = re.compile("(" + "|".join(map(re.escape, PREFS)) + ")")
 
     def extract_pref(df: pd.DataFrame):
-        """セル文字列から都道府県名を抽出（いずれかの列で30件以上ヒットしたら採用）"""
         for c in df.columns:
             s = df[c].astype(str).str.replace(r"\s+", "", regex=True)
             pref = s.str.extract(PREF_PAT, expand=False)
@@ -372,7 +358,8 @@ def load_todoran_table(url, allow_rate=True, debug=False):
 
     def is_rank_like(nums: pd.Series) -> bool:
         s = pd.to_numeric(nums, errors="coerce").dropna()
-        if s.empty: return False
+        if s.empty:
+            return False
         ints = (np.abs(s - np.round(s)) < 1e-9)
         share_int = float(ints.mean())
         in_range = float(((s >= 1) & (s <= 60)).mean())
@@ -389,11 +376,12 @@ def load_todoran_table(url, allow_rate=True, debug=False):
         def bad_name(name: str) -> bool:
             return any(w in str(name) for w in EXCLUDE_WORDS)
 
-        value_candidates = [c for c in df.columns
-                            if (c not in ("順位","都道府県","都道府県名","県名","道府県","府県","自治体","地域"))
-                            and (not bad_name(c))]
+        value_candidates = [
+            c for c in df.columns
+            if (c not in ("順位","都道府県","都道府県名","県名","道府県","府県","自治体","地域"))
+            and (not bad_name(c))
+        ]
 
-        # 総数系を優先
         prior = [c for c in value_candidates if any(k in c for k in TOTAL_KEYWORDS)]
         if allow_rate:
             fallback = value_candidates[:]
@@ -432,7 +420,6 @@ def load_todoran_table(url, allow_rate=True, debug=False):
     for raw in tables:
         got, label = pick_value_dataframe(raw)
         if got is not None:
-            # ラベルは抽出列名を採用（ページタイトル等は使わず安定性優先）
             return got, label
 
     if debug:
@@ -479,10 +466,10 @@ if do_calc:
 
     st.session_state["display_df"] = df.rename(columns={"value_a": label_a, "value_b": label_b})
 
-    # 数値化＆外れ値判定
     x0 = pd.to_numeric(df["value_a"], errors="coerce")
     y0 = pd.to_numeric(df["value_b"], errors="coerce")
     mask0 = x0.notna() & y0.notna()
+
     x_all = x0[mask0].to_numpy()
     y_all = y0[mask0].to_numpy()
     pref_all = df.loc[mask0, "pref"].astype(str).to_numpy()
@@ -522,20 +509,20 @@ if st.session_state.get("display_df") is not None:
     if st.session_state.get("calc") is not None:
         c = st.session_state["calc"]
 
-        # 外れ値を含む（Matplotlib＋箱ひげ）※この散布図の点から回帰直線を計算して表示
+        # Matplotlib：外れ値を含む（回帰直線あり）
         draw_scatter_with_marginal_boxplots(
             c["x_all"], c["y_all"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値を含む）", width_px=720,
             outs_x=c["outs_x"], outs_y=c["outs_y"], pref_all=c["pref_all"]
         )
 
-        # 外れ値除外（Matplotlib＋箱ひげ）※除外後の点から回帰直線を計算して表示
+        # Matplotlib：外れ値除外（回帰直線あり）
         draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
         )
 
-        # インタラクティブ散布図（外れ値含む）※この散布図の点から回帰直線を計算して表示
+        # Plotly：外れ値を含む（回帰直線あり）
         st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認：外れ値を含む）")
         draw_interactive_scatter(
             c["x_all"], c["y_all"],
@@ -545,7 +532,7 @@ if st.session_state.get("display_df") is not None:
             width_px=720
         )
 
-        # インタラクティブ散布図（外れ値除外）※除外後の点から回帰直線を計算して表示
+        # Plotly：外れ値除外（回帰直線あり）
         st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認：外れ値除外）")
         draw_interactive_scatter(
             c["x_in"], c["y_in"],
