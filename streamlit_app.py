@@ -4,7 +4,7 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 中央は Matplotlib：散布図＋周辺箱ひげ図（軸タイトルは箱ひげ側に表示）
-#   * 散布図内に回帰直線＆ r / r² を表示（※必ず最前面に描画する方式）
+#   * 散布図内に回帰直線＆ r / r² を表示（※軸範囲を線も含むよう調整し、確実に表示）
 #   * 下に Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）
 #   * Plotlyも外れ値「含む」「除外」を両方表示
 # - 外れ値一覧（表＋CSV）
@@ -163,6 +163,7 @@ def draw_scatter_with_marginal_boxplots(
     x, y, la, lb, title, width_px, outs_x=None, outs_y=None, pref_all=None
 ):
     import matplotlib.gridspec as gridspec
+
     ok = np.isfinite(x) & np.isfinite(y)
     x = np.asarray(x)[ok]
     y = np.asarray(y)[ok]
@@ -175,12 +176,12 @@ def draw_scatter_with_marginal_boxplots(
         2, 2,
         width_ratios=[1, 4],
         height_ratios=[4, 1],
-        wspace=0.03,   # 左箱ひげと散布図の余白を少し広めに
+        wspace=0.03,
         hspace=0.05,
     )
     ax_main  = fig.add_subplot(gs[0, 1])
     ax_box_y = fig.add_subplot(gs[0, 0], sharey=ax_main)
-    ax_box_x = fig.add_subplot(gs[1, 1])
+    ax_box_x = fig.add_subplot(gs[1, 1], sharex=ax_main)
     ax_empty = fig.add_subplot(gs[1, 0]); ax_empty.axis("off")
 
     # --- 散布図（外れ値は青） ---
@@ -195,25 +196,14 @@ def draw_scatter_with_marginal_boxplots(
     else:
         ax_main.scatter(x, y, color="gray", s=DEFAULT_MARKER_SIZE, zorder=2)
 
-    # --- 回帰直線の係数だけ先に計算して保持（描画は最後にする）---
-    reg = None
-    if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
-        slope, intercept = np.polyfit(x, y, 1)
-        r = float(np.corrcoef(x, y)[0, 1])
-        reg = (float(slope), float(intercept), float(r), float(r**2))
-
-    # 軸範囲を保存（箱ひげ追加で崩れないように）
-    main_xlim = ax_main.get_xlim()
-    main_ylim = ax_main.get_ylim()
-
-    # --- 軸ラベルなど ---
+    # --- ラベル類 ---
     la_clean = _clean_label(la)
     lb_clean = _clean_label(lb)
     ax_main.set_title(_clean_label(title))
     ax_main.xaxis.offsetText.set_visible(False)
     ax_main.yaxis.offsetText.set_visible(False)
 
-    # --- 周辺箱ひげ（whis=1.5）→ こちら側に軸タイトルを表示 ---
+    # --- 周辺箱ひげ（whis=1.5） ---
     ax_box_x.boxplot(x, vert=False, widths=0.6, whis=WHIS, showfliers=True)
     ax_box_x.set_xlabel(la_clean, labelpad=6)
     ax_box_x.set_yticks([])
@@ -222,18 +212,16 @@ def draw_scatter_with_marginal_boxplots(
     ax_box_y.set_ylabel(lb_clean, labelpad=6)
     ax_box_y.set_xticks([])
 
-    # 軸範囲を復元
-    ax_main.set_xlim(main_xlim)
-    ax_main.set_ylim(main_ylim)
+    # --- 回帰直線＆ r / r²（最後に描く＋軸範囲を線も含むよう調整）---
+    if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
+        slope, intercept = np.polyfit(x, y, 1)
+        r = float(np.corrcoef(x, y)[0, 1])
+        r2 = r ** 2
 
-    # --- 回帰直線＆ r / r² を最後に描く（最前面固定）---
-    if reg is not None:
-        slope, intercept, r, r2 = reg
         xs = np.linspace(float(x.min()), float(x.max()), 200)
-        ax_main.plot(
-            xs, slope * xs + intercept,
-            color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=10
-        )
+        ys = slope * xs + intercept
+
+        ax_main.plot(xs, ys, color="black", linewidth=DEFAULT_LINE_WIDTH, zorder=10)
         ax_main.text(
             0.02, 0.95, f"r={r:.3f}\nr²={r2:.3f}",
             transform=ax_main.transAxes, ha="left", va="top",
@@ -241,8 +229,27 @@ def draw_scatter_with_marginal_boxplots(
             bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
             zorder=11,
         )
+
+        # ★重要：点の範囲＋回帰直線の範囲を両方含む
+        xmin, xmax = float(np.min(x)), float(np.max(x))
+        ymin_pts, ymax_pts = float(np.min(y)), float(np.max(y))
+        ymin_line, ymax_line = float(np.min(ys)), float(np.max(ys))
+        ymin = min(ymin_pts, ymin_line)
+        ymax = max(ymax_pts, ymax_line)
+
+        pad_x = (xmax - xmin) * 0.03 if xmax > xmin else 1.0
+        pad_y = (ymax - ymin) * 0.05 if ymax > ymin else 1.0
+
+        ax_main.set_xlim(xmin - pad_x, xmax + pad_x)
+        ax_main.set_ylim(ymin - pad_y, ymax + pad_y)
     else:
-        st.warning("回帰直線を計算できません（点数不足 or ばらつき不足）。")
+        ax_main.text(
+            0.02, 0.95, "回帰直線なし\n(点数不足/ばらつき不足)",
+            transform=ax_main.transAxes, ha="left", va="top",
+            fontsize=10,
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            zorder=11,
+        )
 
     show_fig(fig, width_px)
 
@@ -288,7 +295,7 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
                 y=ys_line,
                 mode="lines",
                 name="回帰直線",
-                line=dict(color="black", width=4),  # 太め
+                line=dict(color="black", width=4),
                 hoverinfo="skip",
                 showlegend=False,
             )
