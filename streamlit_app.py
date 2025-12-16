@@ -4,7 +4,7 @@
 # - 外れ値は箱ひげ図（IQR, whis=1.5）基準（X or Y のどちらか外れで除外）
 # - 散布図＋周辺箱ひげ図（外れ値含む／外れ値除外）
 #   * 中央は Matplotlib：散布図＋周辺箱ひげ図（軸タイトルは箱ひげ側に表示）
-#   * 散布図内に回帰直線＆ r / r² を表示
+#   * 散布図内に回帰直線＆ r / r² を表示（※各散布図で別々に計算）
 #   * 下に Plotly 散布図（ホバーで都道府県名と値を表示、箱ひげなし）
 # - 外れ値一覧（表＋CSV）
 # - 高校生向けIQR説明
@@ -194,7 +194,7 @@ def draw_scatter_with_marginal_boxplots(
     else:
         ax_main.scatter(x, y, color="gray", s=DEFAULT_MARKER_SIZE, zorder=2)
 
-    # --- 回帰直線＆ r / r² ---
+    # --- 回帰直線＆ r / r²（※この散布図の x,y から毎回計算） ---
     drew_line = False
     if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
         slope, intercept = np.polyfit(x, y, 1)
@@ -283,7 +283,7 @@ def draw_interactive_scatter(x, y, la, lb, pref_all, title, width_px=720):
         title=title_clean,
     )
 
-    # 回帰直線（Plotly側にも一本描いておく）
+    # 回帰直線（※この散布図の x,y から毎回計算）
     if len(x) >= 2 and np.std(x) > 0 and np.std(y) > 0:
         slope, intercept = np.polyfit(x, y, 1)
         xs_line = np.linspace(float(x.min()), float(x.max()), 200)
@@ -490,14 +490,19 @@ if do_calc:
     mask_x_in, (q1x, q3x, ix, lox, hix) = boxplot_inlier_mask(x_all, WHIS)
     mask_y_in, (q1y, q3y, iy, loy, hiy) = boxplot_inlier_mask(y_all, WHIS)
     mask_in = mask_x_in & mask_y_in
+
     outs_x = pref_all[~mask_x_in]
     outs_y = pref_all[~mask_y_in]
 
+    x_in = x_all[mask_in]
+    y_in = y_all[mask_in]
+    pref_in = pref_all[mask_in]
+
     st.session_state["calc"] = {
-        "x_all": x_all, "y_all": y_all,
-        "x_in": x_all[mask_in], "y_in": y_all[mask_in],
+        "x_all": x_all, "y_all": y_all, "pref_all": pref_all,
+        "x_in": x_in, "y_in": y_in, "pref_in": pref_in,
         "label_a": label_a, "label_b": label_b,
-        "outs_x": outs_x, "outs_y": outs_y, "pref_all": pref_all,
+        "outs_x": outs_x, "outs_y": outs_y,
         "iqr_info": {
             "x": {"Q1": q1x, "Q3": q3x, "IQR": ix, "LOW": lox, "HIGH": hix},
             "y": {"Q1": q1y, "Q3": q3y, "IQR": iy, "LOW": loy, "HIGH": hiy},
@@ -517,26 +522,36 @@ if st.session_state.get("display_df") is not None:
     if st.session_state.get("calc") is not None:
         c = st.session_state["calc"]
 
-        # 外れ値を含む（Matplotlib＋箱ひげ）
+        # 外れ値を含む（Matplotlib＋箱ひげ）※この散布図の点から回帰直線を計算して表示
         draw_scatter_with_marginal_boxplots(
             c["x_all"], c["y_all"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値を含む）", width_px=720,
             outs_x=c["outs_x"], outs_y=c["outs_y"], pref_all=c["pref_all"]
         )
 
-        # 外れ値除外（Matplotlib＋箱ひげ）
+        # 外れ値除外（Matplotlib＋箱ひげ）※除外後の点から回帰直線を計算して表示
         draw_scatter_with_marginal_boxplots(
             c["x_in"], c["y_in"], c["label_a"], c["label_b"],
             "散布図＋箱ひげ図（外れ値除外）", width_px=720
         )
 
-        # インタラクティブ散布図（箱ひげなし・散布図だけホバー）
-        st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認）")
+        # インタラクティブ散布図（外れ値含む）※この散布図の点から回帰直線を計算して表示
+        st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認：外れ値を含む）")
         draw_interactive_scatter(
             c["x_all"], c["y_all"],
             c["label_a"], c["label_b"],
             c["pref_all"],
             "インタラクティブ散布図（外れ値を含む）",
+            width_px=720
+        )
+
+        # インタラクティブ散布図（外れ値除外）※除外後の点から回帰直線を計算して表示
+        st.markdown("### 散布図（マウスオーバーで都道府県名と値を確認：外れ値除外）")
+        draw_interactive_scatter(
+            c["x_in"], c["y_in"],
+            c["label_a"], c["label_b"],
+            c["pref_in"],
+            "インタラクティブ散布図（外れ値除外）",
             width_px=720
         )
 
